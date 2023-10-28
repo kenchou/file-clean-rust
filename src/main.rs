@@ -1,15 +1,14 @@
 use clap::{ArgAction, Parser};
 use dirs_next as dirs;
+use fnmatch_regex;
+use md5::{Digest, Md5};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_yaml::Error;
-use std::{
-    collections::HashMap,
-    env,
-    fs::File,
-    path::{Path, PathBuf},
-    process,
-};
-use walkdir::WalkDir;
+use std::collections::HashMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::{env, fs::File, process};
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, disable_help_flag = true)]
@@ -61,7 +60,116 @@ struct PatternsConfig {
     cleanup: Vec<String>,
 }
 
-fn main() {
+impl PatternsConfig {
+    fn from_config_file(config_file: &Path) -> Result<PatternsConfig, serde_yaml::Error> {
+        let file = File::open(&config_file).expect("Cannot open file!");
+        let config: PatternsConfig = serde_yaml::from_reader(file)?;
+        return Ok(config);
+    }
+}
+
+#[derive(Debug)]
+struct PatternMacher {
+    patterns_to_remove: Vec<Regex>,
+    patterns_to_remove_with_hash: Vec<(Regex, Vec<String>)>,
+    patterns_to_rename: Vec<Regex>,
+}
+
+impl PatternMacher {
+    fn from_config_file(config_file: &Path) -> Result<PatternMacher, serde_yaml::Error> {
+        let config = PatternsConfig::from_config_file(config_file).unwrap();
+        let patterns_to_remove =
+            create_mixed_regex_list(config.remove.iter().map(|s| s.as_str()).collect()).unwrap();
+        let patterns_to_rename =
+            create_regex_list(config.cleanup.iter().map(|s| s.as_str()).collect()).unwrap();
+        let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash).unwrap();
+        Ok(PatternMacher {
+            patterns_to_remove,
+            patterns_to_remove_with_hash,
+            patterns_to_rename,
+        })
+    }
+
+    fn match_remove_pattern(&self, test_file: &str) -> (bool, Option<String>) {
+        for re in &self.patterns_to_remove {
+            if re.is_match(test_file) {
+                return (true, Some(re.to_string()));
+            }
+        }
+        return (false, None);
+    }
+
+    fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
+        for (re, hash_list) in &self.patterns_to_remove_with_hash {
+            if re.is_match(test_file) {
+                let mut file = File::open(test_file).unwrap();
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer).unwrap();
+                let mut hasher = Md5::new();
+                hasher.update(&buffer);
+
+                let hash = format!("{:x}", hasher.finalize());
+                if hash_list.contains(&hash) {
+                    println!(" <== {}:{}", re.to_string(), hash);
+                    return (true, Some(format!("{}:{}", re.to_string(), hash)));
+                }
+            }
+        }
+        return (false, None);
+    }
+
+    fn clean_filename(&self, filename: &str) -> String {
+        let mut new_filename = filename.to_string();
+        for re in &self.patterns_to_rename {
+            new_filename = re.replace_all(&new_filename, "").to_string();
+        }
+        return new_filename;
+    }
+}
+
+/**
+ * 创建正则表达式列表，通配符形式转为正则表达式
+ */
+fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
+    let regexes: Vec<Regex> = patterns
+        .iter()
+        .map(|pattern| {
+            let re: Regex;
+            if pattern.starts_with("/") {
+                re = Regex::new(&pattern[1..]).unwrap()
+            } else {
+                re = fnmatch_regex::glob_to_regex(pattern).unwrap()
+            }
+            re
+        })
+        .collect();
+
+    Ok(regexes)
+}
+
+/**
+ * 创建正则表达式列表
+ */
+fn create_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
+    let regexes: Vec<Regex> = patterns
+        .iter()
+        .map(|pattern| Regex::new(&pattern).unwrap())
+        .collect();
+
+    Ok(regexes)
+}
+
+fn create_patterns_with_hash(
+    patterns: HashMap<String, Vec<String>>,
+) -> Result<Vec<(Regex, Vec<String>)>, Box<dyn std::error::Error>> {
+    let patterns_to_remove_with_hash = patterns
+        .into_iter()
+        .map(|(key, value)| (Regex::new(&key).unwrap(), value))
+        .collect();
+    Ok(patterns_to_remove_with_hash)
+}
+
+fn main() -> std::io::Result<()> {
     let options = CliOptions::parse();
     println!("{options:#?}"); // debug
 
@@ -93,18 +201,58 @@ fn main() {
     }
     let config_file = config_file.unwrap();
 
-    let config = load_patterns(config_file);
-    println!("{config:#?}");
+    let pattern_matcher = PatternMacher::from_config_file(&config_file).unwrap();
+    println!("{pattern_matcher:#?}");
 
-    for entry in WalkDir::new(target_path).into_iter().filter_map(|e| e.ok()) {
-        println!("{}", entry.path().display());
+    let mut pending_remove: Vec<PathBuf> = vec![];
+    let mut pending_rename: Vec<(PathBuf, String)> = vec![];
+    for entry in WalkDir::new(target_path)
+        .into_iter()
+        .filter_entry(|e| is_not_hidden(e))
+        .filter_map(|e| e.ok())
+    {
+        let filepath = entry.path();
+        let filename = filepath.to_str().unwrap();
+        print!("{filename:#?}");
+
+        if options.enable_delete {
+            let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
+            if matched {
+                println!(" <== {pattern:#?}");
+                pending_remove.push(filepath.to_path_buf());
+                continue;
+            } else {
+                // test filename and hash
+                (matched, pattern) = pattern_matcher.match_remove_hash(filename);
+                if matched {
+                    println!(" <== {pattern:#?}");
+                    pending_remove.push(filepath.to_path_buf());
+                    continue;
+                }
+            }
+        }
+
+        if options.enable_rename {
+            let new_filename = pattern_matcher.clean_filename(filename);
+            if new_filename != filename {
+                println!(" ==> {new_filename:#?}");
+                pending_rename.push((filepath.to_path_buf(), new_filename));
+                continue;
+            }
+        }
+        println!();
     }
+    println!("files to delete: {pending_remove:#?}");
+    println!("files to rename: {pending_rename:#?}");
+    Ok(())
 }
 
-fn load_patterns(config_file: PathBuf) -> Result<PatternsConfig, Error> {
-    let file = File::open(&config_file).expect("Cannot open file!");
-    let config: PatternsConfig = serde_yaml::from_reader(file)?;
-    Ok(config)
+fn is_not_hidden(entry: &DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| !s.starts_with('.'))
+        .unwrap_or(false)
 }
 
 fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf> {

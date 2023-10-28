@@ -8,6 +8,9 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.4.3", features = ["derive"] }
 dirs-next = "2.0.0"
+fnmatch-regex = "0.2.0"
+md-5 = { version = "0.10.6", features = ["md5-asm"] }
+regex = "1.10.2"
 serde = { version = "1.0.189", features = ["derive"] }
 serde_yaml = "0.9.25"
 walkdir = "2.4.0"
