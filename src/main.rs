@@ -1,13 +1,18 @@
 use clap::{ArgAction, Parser};
+use colored::*;
 use dirs_next as dirs;
 use fnmatch_regex;
 use md5::{Digest, Md5};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::{env, fs::File, process};
+use std::{
+    collections::HashMap,
+    env,
+    fs::{remove_dir_all, remove_file, rename, File},
+    io::{self, Read},
+    path::{Path, PathBuf},
+    process,
+};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser, Debug)]
@@ -119,10 +124,18 @@ impl PatternMacher {
     }
 
     fn clean_filename(&self, filename: &str) -> String {
-        let mut new_filename = filename.to_string();
+        let mut new_filename = PathBuf::from(filename.to_string())
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         for re in &self.patterns_to_rename {
             new_filename = re.replace_all(&new_filename, "").to_string();
         }
+        let mut full_path = PathBuf::from(filename.to_string());
+        full_path.set_file_name(new_filename);
+        let new_filename = full_path.to_str().unwrap().to_string();
         return new_filename;
     }
 }
@@ -189,7 +202,7 @@ fn main() -> std::io::Result<()> {
         if let Some(home_dir) = dirs::home_dir() {
             guess_paths.push(home_dir);
         }
-        println!("{guess_paths:#?}");
+        // println!("{guess_paths:#?}");
         config_file = guess_path(".cleanup-patterns.yml", guess_paths);
         println!("{config_file:#?}");
     } else {
@@ -202,9 +215,9 @@ fn main() -> std::io::Result<()> {
     let config_file = config_file.unwrap();
 
     let pattern_matcher = PatternMacher::from_config_file(&config_file).unwrap();
-    println!("{pattern_matcher:#?}");
+    // println!("{pattern_matcher:#?}");
 
-    let mut pending_remove: Vec<PathBuf> = vec![];
+    let mut pending_remove: Vec<(PathBuf, String)> = vec![];
     let mut pending_rename: Vec<(PathBuf, String)> = vec![];
     for entry in WalkDir::new(target_path)
         .into_iter()
@@ -212,21 +225,28 @@ fn main() -> std::io::Result<()> {
         .filter_map(|e| e.ok())
     {
         let filepath = entry.path();
-        let filename = filepath.to_str().unwrap();
-        print!("{filename:#?}");
+        let filename = entry.file_name().to_str().unwrap();
+        let depth = entry.depth();
+        let prefix = " ".repeat(depth * 4);
+
+        // print!("{filename:#?}");
+        // print!("{}{}", prefix, name.display());
+        print!("{}├── {}", prefix, filename);
 
         if options.enable_delete {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
-                println!(" <== {pattern:#?}");
-                pending_remove.push(filepath.to_path_buf());
+                let p = pattern.unwrap();
+                println!(" <== {}", p);
+                pending_remove.push((filepath.to_path_buf(), p));
                 continue;
             } else {
                 // test filename and hash
-                (matched, pattern) = pattern_matcher.match_remove_hash(filename);
+                (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
                 if matched {
-                    println!(" <== {pattern:#?}");
-                    pending_remove.push(filepath.to_path_buf());
+                    let p = pattern.unwrap();
+                    println!(" <== {}", p);
+                    pending_remove.push((filepath.to_path_buf(), p));
                     continue;
                 }
             }
@@ -244,6 +264,20 @@ fn main() -> std::io::Result<()> {
     }
     println!("files to delete: {pending_remove:#?}");
     println!("files to rename: {pending_rename:#?}");
+
+    if options.enable_delete {
+        for (file_path, pattern) in pending_remove {
+            println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
+            remove_path(file_path)?;
+        }
+    }
+
+    if options.enable_rename {
+        for (file_path, new_file_path) in pending_rename {
+            println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_path);
+            rename(file_path, new_file_path)?;
+        }
+    }
     Ok(())
 }
 
@@ -281,4 +315,11 @@ fn dedup_vec(v: &Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     return new_vec;
+}
+
+fn remove_path(path: PathBuf) -> io::Result<()> {
+    match remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(_) => remove_dir_all(path),
+    }
 }

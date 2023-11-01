@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4.3", features = ["derive"] }
+colored = "2.0.4"
 dirs-next = "2.0.0"
 fnmatch-regex = "0.2.0"
 md-5 = { version = "0.10.6", features = ["md5-asm"] }
