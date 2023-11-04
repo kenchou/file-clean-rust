@@ -4,8 +4,8 @@ use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
 use md5::{Digest, Md5};
-// use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
 use std::{
     collections::HashMap,
     env,
@@ -61,16 +61,67 @@ struct CliOptions {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PatternsConfig {
-    remove: String,
+    remove: Vec<String>,
     remove_hash: HashMap<String, Vec<String>>,
-    cleanup: String,
+    cleanup: Vec<String>,
 }
 
 impl PatternsConfig {
-    fn from_config_file(config_file: &Path) -> Result<PatternsConfig, serde_yaml::Error> {
+    fn from_config_file(config_file: &Path) -> PatternsConfig {
         let file = File::open(&config_file).expect("Cannot open file!");
-        let config: PatternsConfig = serde_yaml::from_reader(file)?;
-        return Ok(config);
+        let values: HashMap<String, Value> = serde_yaml::from_reader(file).unwrap();
+        let mut config = PatternsConfig {
+            remove: vec![],
+            remove_hash: HashMap::new(),
+            cleanup: vec![],
+        };
+        for (key, value) in values {
+            match key.as_str() {
+                "remove" => match value {
+                    Value::String(s) => config
+                        .remove
+                        .extend(s.lines().map(|v| v.trim().to_string()).collect::<Vec<_>>()),
+                    Value::Sequence(s) => config.remove.extend(
+                        s.iter()
+                            .map(|v| v.as_str().unwrap().to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => {}
+                },
+                "remove_hash" => match value {
+                    Value::Mapping(map) => config.remove_hash.extend(
+                        map.iter()
+                            .map(|(k, v)| {
+                                (
+                                    k.as_str().unwrap().to_string(),
+                                    match v {
+                                        Value::Sequence(hash_list) => hash_list
+                                            .into_iter()
+                                            .map(|vv| vv.as_str().unwrap().to_string())
+                                            .collect(),
+                                        _ => vec![],
+                                    },
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => {}
+                },
+                "cleanup" => match value {
+                    Value::String(s) => config
+                        .cleanup
+                        .extend(s.lines().map(|v| v.trim().to_string()).collect::<Vec<_>>()),
+                    Value::Sequence(s) => config.cleanup.extend(
+                        s.iter()
+                            .map(|v| v.as_str().unwrap().to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        config
     }
 }
 
@@ -83,9 +134,11 @@ struct PatternMacher {
 
 impl PatternMacher {
     fn from_config_file(config_file: &Path) -> Result<PatternMacher, serde_yaml::Error> {
-        let config = PatternsConfig::from_config_file(config_file).unwrap();
-        let patterns_to_remove = create_mixed_regex_list(config.remove.lines().collect()).unwrap();
-        let patterns_to_rename = create_regex_list(config.cleanup.lines().collect()).unwrap();
+        let config = PatternsConfig::from_config_file(config_file);
+        let patterns_to_remove =
+            create_mixed_regex_list(config.remove.iter().map(AsRef::as_ref).collect()).unwrap();
+        let patterns_to_rename =
+            create_regex_list(config.cleanup.iter().map(AsRef::as_ref).collect()).unwrap();
         let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash).unwrap();
         Ok(PatternMacher {
             patterns_to_remove,
