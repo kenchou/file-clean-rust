@@ -294,11 +294,11 @@ fn main() -> std::io::Result<()> {
 }
 
 fn is_not_hidden(entry: &DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| !s.starts_with('.'))
-        .unwrap_or(false)
+    entry.file_name().to_string_lossy() != ".tmp"
+        && entry.path().parent().map_or(true, |p| {
+            p.file_name()
+                .map_or(true, |p| p.to_string_lossy() != ".tmp")
+        })
 }
 
 fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf> {
