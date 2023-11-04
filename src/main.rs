@@ -1,9 +1,10 @@
+mod fnmatch_regex;
 use clap::{ArgAction, Parser};
 use colored::*;
 use dirs_next as dirs;
-use fnmatch_regex;
+use fancy_regex::Regex;
 use md5::{Digest, Md5};
-use regex::Regex;
+// use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -60,9 +61,9 @@ struct CliOptions {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PatternsConfig {
-    remove: Vec<String>,
+    remove: String,
     remove_hash: HashMap<String, Vec<String>>,
-    cleanup: Vec<String>,
+    cleanup: String,
 }
 
 impl PatternsConfig {
@@ -83,10 +84,8 @@ struct PatternMacher {
 impl PatternMacher {
     fn from_config_file(config_file: &Path) -> Result<PatternMacher, serde_yaml::Error> {
         let config = PatternsConfig::from_config_file(config_file).unwrap();
-        let patterns_to_remove =
-            create_mixed_regex_list(config.remove.iter().map(|s| s.as_str()).collect()).unwrap();
-        let patterns_to_rename =
-            create_regex_list(config.cleanup.iter().map(|s| s.as_str()).collect()).unwrap();
+        let patterns_to_remove = create_mixed_regex_list(config.remove.lines().collect()).unwrap();
+        let patterns_to_rename = create_regex_list(config.cleanup.lines().collect()).unwrap();
         let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash).unwrap();
         Ok(PatternMacher {
             patterns_to_remove,
@@ -97,7 +96,7 @@ impl PatternMacher {
 
     fn match_remove_pattern(&self, test_file: &str) -> (bool, Option<String>) {
         for re in &self.patterns_to_remove {
-            if re.is_match(test_file) {
+            if re.is_match(test_file).unwrap() {
                 return (true, Some(re.to_string()));
             }
         }
@@ -106,7 +105,7 @@ impl PatternMacher {
 
     fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
-            if re.is_match(test_file) {
+            if re.is_match(test_file).unwrap() {
                 let mut file = File::open(test_file).unwrap();
                 let mut buffer = Vec::new();
                 file.read_to_end(&mut buffer).unwrap();
@@ -147,16 +146,15 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
     let regexes: Vec<Regex> = patterns
         .iter()
         .map(|pattern| {
-            let re: Regex;
+            let pattern = pattern.trim();
+            // println!(">>> {:#?}", pattern);
             if pattern.starts_with("/") {
-                re = Regex::new(&pattern[1..]).unwrap()
+                Regex::new(&pattern[1..]).unwrap()
             } else {
-                re = fnmatch_regex::glob_to_regex(pattern).unwrap()
+                Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
             }
-            re
         })
         .collect();
-
     Ok(regexes)
 }
 
@@ -166,9 +164,11 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
 fn create_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
     let regexes: Vec<Regex> = patterns
         .iter()
-        .map(|pattern| Regex::new(&pattern).unwrap())
+        .map(|pattern| {
+            // println!("---> {:#?}", pattern);
+            Regex::new(pattern.trim()).unwrap()
+        })
         .collect();
-
     Ok(regexes)
 }
 
@@ -177,7 +177,13 @@ fn create_patterns_with_hash(
 ) -> Result<Vec<(Regex, Vec<String>)>, Box<dyn std::error::Error>> {
     let patterns_to_remove_with_hash = patterns
         .into_iter()
-        .map(|(key, value)| (Regex::new(&key).unwrap(), value))
+        .map(|(key, value)| {
+            // println!("hash --> {}", key);
+            (
+                Regex::new(fnmatch_regex::glob_to_regex_string(&key).as_str()).unwrap(),
+                value,
+            )
+        })
         .collect();
     Ok(patterns_to_remove_with_hash)
 }
