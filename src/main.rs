@@ -274,14 +274,20 @@ fn main() -> std::io::Result<()> {
     if options.enable_delete {
         for (file_path, pattern) in pending_remove {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
-            remove_path(file_path)?;
+            if options.prune {
+                remove_path(file_path)?;
+            }
         }
     }
 
     if options.enable_rename {
-        for (file_path, new_file_path) in pending_rename {
-            println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_path);
-            rename(file_path, new_file_path)?;
+        for (file_path, new_file_name) in pending_rename {
+            println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
+            let mut new_filepath = file_path.clone();
+            new_filepath.set_file_name(new_file_name);
+            if options.prune {
+                rename(file_path, new_filepath)?;
+            }
         }
     }
     Ok(())
