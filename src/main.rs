@@ -26,21 +26,30 @@ struct CliOptions {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
+    /// Enable delete files and directories which matched remove patterns.
+    #[arg(short='d', long="enable-deletion", action = ArgAction::SetTrue)]
+    enable_deletion: bool,
     /// Disable delete files and directories which matched remove patterns.
-    #[arg(short='D', long="disable-delete", action = ArgAction::SetFalse)]
-    enable_delete: bool,
+    #[arg(short='D', long="disable-deletion", action = ArgAction::SetFalse, conflicts_with = "enable_deletion")]
+    disable_deletion: bool,
 
     /// Disable remove empty dir.
     #[arg(short='E', long="disable-remove-empty-dir", action = ArgAction::SetFalse)]
     prune_empty_dir: bool,
 
+    /// Enable rename files and directories which matched patterns.
+    #[arg(short='r', long="enable-renaming", action = ArgAction::SetTrue)]
+    enable_renaming: bool,
     /// Disable rename files and directories which matched patterns.
-    #[arg(short='R', long="disable-rename", action = ArgAction::SetFalse)]
-    enable_rename: bool,
+    #[arg(short='R', long="disable-renaming", action = ArgAction::SetFalse, conflicts_with = "enable_renaming")]
+    disable_renaming: bool,
 
-    /// remove file if hash matched.
-    #[arg(short = 'x', long = "enable-hash-match")]
-    enable_hash: bool,
+    /// Enable hash matching delete feature.
+    #[arg(short = 'x', long = "enable-hash-match", action = ArgAction::SetTrue)]
+    enable_hash_matching: bool,
+    /// Disable hash matching delete feature.
+    #[arg(short = 'X', long = "disable-hash-match", action = ArgAction::SetFalse, conflicts_with = "enable_hash_matching")]
+    disble_hash_matching: bool,
 
     /// ignored if any parents dir is .tmp
     #[arg(short = 't', long = "skip-tmp-in-parents")]
@@ -292,7 +301,7 @@ fn main() -> std::io::Result<()> {
         // print!("{}{}", prefix, name.display());
         print!("{}├── {}", prefix, filename);
 
-        if options.enable_delete {
+        if options.enable_deletion {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
@@ -311,7 +320,7 @@ fn main() -> std::io::Result<()> {
             }
         }
 
-        if options.enable_rename {
+        if options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
                 println!(" ==> {new_filename:#?}");
@@ -324,7 +333,7 @@ fn main() -> std::io::Result<()> {
     println!("files to delete: {pending_remove:#?}");
     println!("files to rename: {pending_rename:#?}");
 
-    if options.enable_delete {
+    if options.enable_deletion {
         for (file_path, pattern) in pending_remove {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
             if options.prune {
@@ -333,7 +342,7 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    if options.enable_rename {
+    if options.enable_renaming {
         for (file_path, new_file_name) in pending_rename {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
