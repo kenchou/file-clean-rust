@@ -12,7 +12,6 @@ use std::{
     fs::{remove_dir_all, remove_file, rename, File},
     io::{self, Read},
     path::{Path, PathBuf},
-    process,
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -83,6 +82,8 @@ struct AppOptions {
     // skip_tmp: bool,
     prune: bool,
     // verbose: u8,
+    config_file: PathBuf,
+    target_path: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -267,77 +268,72 @@ fn create_patterns_with_hash(
     Ok(patterns_to_remove_with_hash)
 }
 
-fn main() -> std::io::Result<()> {
-    let options = CliOptions::parse();
-
-    let app_options = AppOptions {
-        enable_deletion: if options.disable_deletion {
-            false
-        } else {
-            options.enable_deletion
-        },
-        enable_hash_matching: if options.disble_hash_matching {
-            false
-        } else {
-            options.enable_hash_matching
-        },
-        // enable_prune_empty_dir: if options.disable_prune_empty_dir {
-        //     false
-        // } else {
-        //     options.enable_prune_empty_dir
-        // },
-        enable_renaming: if options.disable_renaming {
-            false
-        } else {
-            options.enable_renaming
-        },
-        // skip_tmp: if options.no_skip_tmp {
-        //     false
-        // } else {
-        //     options.skip_tmp
-        // },
-        prune: options.prune,
-        // verbose: options.verbose,
-    };
-
-    let config_file: Option<PathBuf>;
-    let target_path = options
-        .path
-        .clone()
-        .unwrap_or(PathBuf::from("."))
-        .to_path_buf()
-        .canonicalize()
-        .expect("Failed to get absolute path");
-    println!("Target Path: {target_path:#?}");
-
-    // guess and read config
-    if options.config.is_none() {
-        // guess
-        let mut guess_paths: Vec<_> = target_path.ancestors().map(Path::to_path_buf).collect();
-        if let Some(home_dir) = dirs::home_dir() {
-            guess_paths.push(home_dir);
-        }
-        // println!("{guess_paths:#?}");
-        config_file = guess_path(".cleanup-patterns.yml", guess_paths);
-    } else {
-        config_file = Some(options.config.clone().unwrap())
+fn get_guess_paths(target_path: &PathBuf) -> Vec<PathBuf> {
+    let mut guess_paths: Vec<_> = target_path.ancestors().map(Path::to_path_buf).collect();
+    if let Some(home_dir) = dirs::home_dir() {
+        guess_paths.push(home_dir);
     }
-    std::mem::drop(options);
+    guess_paths
+}
 
+fn main() -> std::io::Result<()> {
+    let app_options: AppOptions;
+    {
+        // init AppOptions
+        let options = CliOptions::parse();
+
+        let target_path = options
+            .path
+            .clone()
+            .unwrap_or(PathBuf::from("."))
+            .to_path_buf()
+            .canonicalize()?;
+
+        app_options = AppOptions {
+            enable_deletion: if options.disable_deletion {
+                false
+            } else {
+                options.enable_deletion
+            },
+            enable_hash_matching: if options.disble_hash_matching {
+                false
+            } else {
+                options.enable_hash_matching
+            },
+            // enable_prune_empty_dir: if options.disable_prune_empty_dir {
+            //     false
+            // } else {
+            //     options.enable_prune_empty_dir
+            // },
+            enable_renaming: if options.disable_renaming {
+                false
+            } else {
+                options.enable_renaming
+            },
+            // skip_tmp: if options.no_skip_tmp {
+            //     false
+            // } else {
+            //     options.skip_tmp
+            // },
+            prune: options.prune,
+            // verbose: options.verbose,
+            config_file: match options.config {
+                None => guess_path(".cleanup-patterns.yml", get_guess_paths(&target_path)).unwrap(),
+                Some(p) => p,
+            },
+            target_path,
+        };
+    }
     println!("{app_options:#?}"); // debug
 
-    if config_file.is_none() {
-        println!("Missing config of patterns. exit!");
-        process::exit(1);
-    }
-    let config_file = config_file.unwrap();
+    let config_file = app_options.config_file;
 
     let pattern_matcher = PatternMacher::from_config_file(&config_file).unwrap();
     // println!("{pattern_matcher:#?}");
 
     let mut pending_remove: Vec<(PathBuf, String)> = vec![];
     let mut pending_rename: Vec<(PathBuf, String)> = vec![];
-    for entry in WalkDir::new(target_path)
+    for entry in WalkDir::new(app_options.target_path)
         .into_iter()
         .filter_entry(|e| is_not_hidden(e))
         .filter_map(|e| e.ok())
@@ -398,6 +394,7 @@ fn main() -> std::io::Result<()> {
             let mut new_filepath = file_path.clone();
             new_filepath.set_file_name(new_file_name);
             if app_options.prune {
+                println!("--> {}", new_filepath.display().to_string().cyan());
                 rename(file_path, new_filepath)?;
             }
         }
