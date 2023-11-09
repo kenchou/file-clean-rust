@@ -81,7 +81,7 @@ struct AppOptions {
     enable_renaming: bool,
     // skip_tmp: bool,
     prune: bool,
-    // verbose: u8,
+    verbose: u8,
     config_file: PathBuf,
     target_path: PathBuf,
 }
@@ -316,7 +316,7 @@ fn main() -> std::io::Result<()> {
             //     options.skip_tmp
             // },
             prune: options.prune,
-            // verbose: options.verbose,
+            verbose: options.verbose,
             config_file: match options.config {
                 None => guess_path(".cleanup-patterns.yml", get_guess_paths(&target_path)).unwrap(),
                 Some(p) => p,
@@ -324,12 +324,13 @@ fn main() -> std::io::Result<()> {
             target_path,
         };
     }
-    println!("{app_options:#?}"); // debug
+    if app_options.verbose >= 2 {
+        println!("{app_options:#?}");
+    }
 
     let config_file = app_options.config_file;
 
     let pattern_matcher = PatternMacher::from_config_file(&config_file).unwrap();
-    // println!("{pattern_matcher:#?}");
 
     let mut pending_remove: Vec<(PathBuf, String)> = vec![];
     let mut pending_rename: Vec<(PathBuf, String)> = vec![];
@@ -343,15 +344,17 @@ fn main() -> std::io::Result<()> {
         let depth = entry.depth();
         let prefix = " ".repeat(depth * 4);
 
-        // print!("{filename:#?}");
-        // print!("{}{}", prefix, name.display());
-        print!("{}├── {}", prefix, filename);
+        if app_options.verbose >= 1 {
+            print!("{}├── {}", prefix, filename);
+        }
 
         if app_options.enable_deletion {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
-                println!(" <== {}", p);
+                if app_options.verbose >= 1 {
+                    println!(" <== {}", p);
+                }
                 pending_remove.push((filepath.to_path_buf(), p));
                 continue;
             } else if app_options.enable_hash_matching {
@@ -359,7 +362,9 @@ fn main() -> std::io::Result<()> {
                 (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
                 if matched {
                     let p = pattern.unwrap();
-                    println!(" <== {}", p);
+                    if app_options.verbose >= 1 {
+                        println!(" <== {}", p);
+                    }
                     pending_remove.push((filepath.to_path_buf(), p));
                     continue;
                 }
@@ -369,15 +374,22 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                println!(" ==> {new_filename:#?}");
+                if app_options.verbose >= 1 {
+                    println!(" ==> {new_filename:#?}");
+                }
                 pending_rename.push((filepath.to_path_buf(), new_filename));
                 continue;
             }
         }
-        println!();
+        if app_options.verbose >= 1 {
+            println!();
+        }
     }
-    println!("files to delete: {pending_remove:#?}");
-    println!("files to rename: {pending_rename:#?}");
+
+    if app_options.verbose >= 2 {
+        println!("files to delete: {pending_remove:#?}");
+        println!("files to rename: {pending_rename:#?}");
+    }
 
     if app_options.enable_deletion {
         for (file_path, pattern) in pending_remove {
