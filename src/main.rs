@@ -37,9 +37,9 @@ struct CliOptions {
     enable_hash_matching: bool,
     /// Disable hash matching delete feature.
     #[arg(short = 'X', long = "disable-hash-match", action = ArgAction::SetTrue, conflicts_with = "enable_hash_matching")]
-    disble_hash_matching: bool,
+    disable_hash_matching: bool,
 
-    /// Ensable remove empty dir.
+    /// Enable remove empty dir.
     #[arg(short = 'e', long = "enable-remove-empty-dir", default_value = "true")]
     enable_prune_empty_dir: bool,
     /// Disable remove empty dir.
@@ -153,21 +153,21 @@ impl PatternsConfig {
 }
 
 #[derive(Debug)]
-struct PatternMacher {
+struct PatternMatcher {
     patterns_to_remove: Vec<Regex>,
     patterns_to_remove_with_hash: Vec<(Regex, Vec<String>)>,
     patterns_to_rename: Vec<Regex>,
 }
 
-impl PatternMacher {
-    fn from_config_file(config_file: &Path) -> Result<PatternMacher, serde_yaml::Error> {
+impl PatternMatcher {
+    fn from_config_file(config_file: &Path) -> Result<PatternMatcher, serde_yaml::Error> {
         let config = PatternsConfig::from_config_file(config_file);
         let patterns_to_remove =
             create_mixed_regex_list(config.remove.iter().map(AsRef::as_ref).collect()).unwrap();
         let patterns_to_rename =
             create_regex_list(config.cleanup.iter().map(AsRef::as_ref).collect()).unwrap();
         let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash).unwrap();
-        Ok(PatternMacher {
+        Ok(PatternMatcher {
             patterns_to_remove,
             patterns_to_remove_with_hash,
             patterns_to_rename,
@@ -295,7 +295,7 @@ fn main() -> std::io::Result<()> {
             } else {
                 options.enable_deletion
             },
-            enable_hash_matching: if options.disble_hash_matching {
+            enable_hash_matching: if options.disable_hash_matching {
                 false
             } else {
                 options.enable_hash_matching
@@ -330,7 +330,7 @@ fn main() -> std::io::Result<()> {
 
     let config_file = app_options.config_file;
 
-    let pattern_matcher = PatternMacher::from_config_file(&config_file).unwrap();
+    let pattern_matcher = PatternMatcher::from_config_file(&config_file).unwrap();
 
     let mut pending_remove: Vec<(PathBuf, String)> = vec![];
     let mut pending_rename: Vec<(PathBuf, String)> = vec![];
