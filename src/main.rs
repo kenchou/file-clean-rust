@@ -1,84 +1,24 @@
 mod fnmatch_regex;
-use clap::{ArgAction, Parser};
+use clap::{arg, command, value_parser, ArgAction};
 use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-use std::{
-    collections::HashMap,
-    env,
-    fs::{remove_dir_all, remove_file, rename, File},
-    io::{self, Read},
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
+use std::env;
+use std::fs::{remove_dir_all, remove_file, rename, File};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None, disable_help_flag = true)]
-struct CliOptions {
-    /// Target Directory to clean
-    path: Option<PathBuf>,
-
-    /// Sets a custom config file
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-
-    /// Enable delete files and directories which matched remove patterns.
-    #[arg(short = 'd', long = "enable-deletion", default_value = "true")]
-    enable_deletion: bool,
-    /// Disable delete files and directories which matched remove patterns.
-    #[arg(short='D', long="disable-deletion", action = ArgAction::SetTrue, conflicts_with = "enable_deletion")]
-    disable_deletion: bool,
-
-    /// Enable hash matching delete feature.
-    #[arg(short = 'x', long = "enable-hash-match", default_value = "true")]
-    enable_hash_matching: bool,
-    /// Disable hash matching delete feature.
-    #[arg(short = 'X', long = "disable-hash-match", action = ArgAction::SetTrue, conflicts_with = "enable_hash_matching")]
-    disable_hash_matching: bool,
-
-    /// Enable remove empty dir.
-    #[arg(short = 'e', long = "enable-remove-empty-dir", default_value = "true")]
-    enable_prune_empty_dir: bool,
-    /// Disable remove empty dir.
-    #[arg(short='E', long="disable-remove-empty-dir", action = ArgAction::SetTrue, conflicts_with = "enable_prune_empty_dir")]
-    disable_prune_empty_dir: bool,
-
-    /// Enable rename files and directories which matched patterns.
-    #[arg(short = 'r', long = "enable-renaming", default_value = "true")]
-    enable_renaming: bool,
-    /// Disable rename files and directories which matched patterns.
-    #[arg(short='R', long="disable-renaming", action = ArgAction::SetTrue, conflicts_with = "enable_renaming")]
-    disable_renaming: bool,
-
-    /// ignored if any parents dir is .tmp
-    #[arg(short = 't', long = "skip-tmp-dirs", default_value = "true")]
-    skip_tmp: bool,
-    /// ignored if any parents dir is .tmp
-    #[arg(short = 'T', long = "no-skip-tmp-dirs", action = ArgAction::SetTrue, conflicts_with = "skip_tmp")]
-    no_skip_tmp: bool,
-
-    /// Execute remove and rename action
-    #[arg(long)]
-    prune: bool,
-
-    /// verbose mode
-    #[arg(short, long, action = ArgAction::Count)]
-    verbose: u8,
-
-    /// Print help
-    #[arg(long, action = ArgAction::Help)]
-    help: Option<bool>,
-}
 
 #[derive(Debug)]
 struct AppOptions {
     enable_deletion: bool,
     enable_hash_matching: bool,
-    // enable_prune_empty_dir: bool,
     enable_renaming: bool,
+    // enable_prune_empty_dir: bool,
     // skip_tmp: bool,
     prune: bool,
     verbose: u8,
@@ -280,46 +220,111 @@ fn main() -> std::io::Result<()> {
     let app_options: AppOptions;
     {
         // init AppOptions
-        let options = CliOptions::parse();
+        let app = command!() // requires `cargo` feature
+            .arg(arg!([path] "target path to clean up"))
+            .arg(
+                arg!(-c --config <FILE> "Sets a custom config file")
+                    // We don't have syntax yet for optional options, so manually calling `required`
+                    .required(false)
+                    .value_parser(value_parser!(PathBuf)),
+            )
+            .arg(
+                arg!(
+                    -d --delete ... "Match filename deletion rule. [default]"
+                )
+                .action(ArgAction::SetTrue), // .hide(true),
+            )
+            .arg(
+                arg!(-D --"no-delete" ... "Do not match filename deletion rule.")
+                    .value_parser(value_parser!(bool))
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with("delete"),
+            )
+            .arg(
+                arg!(
+                    -x --hash ... "Match hash deletion rule. [default]"
+                )
+                .action(ArgAction::SetTrue), // .hide(true),
+            )
+            .arg(
+                arg!(
+                    -X --"no-hash" ... "Do not match hash deletion rule."
+                )
+                .action(ArgAction::SetTrue)
+                .conflicts_with("hash"),
+            )
+            .arg(
+                arg!(
+                    -r --rename ... "Match file renaming rule. [default]"
+                )
+                .action(ArgAction::SetTrue), // .hide(true),
+            )
+            .arg(
+                arg!(
+                    -R --"no-rename" ... "Do not match file renaming rule."
+                )
+                .action(ArgAction::SetTrue)
+                .conflicts_with("rename"),
+            )
+            .arg(
+                arg!(
+                    -t --"skip-tmp" ... "Skip the .tmp directory. [default]"
+                )
+                .action(ArgAction::SetTrue), // .hide(true),
+            )
+            .arg(
+                arg!(
+                    -T --"no-skip-tmp" ... "Do not skip the .tmp directory."
+                )
+                .action(ArgAction::SetTrue)
+                .conflicts_with("skip-tmp"),
+            )
+            .arg(
+                arg!(
+                    -e --"remove-empty-dir" ... "Delete empty directories. [default]"
+                )
+                .action(ArgAction::SetTrue), // .hide(true),
+            )
+            .arg(
+                arg!(
+                    -E --"no-remove-empty-dir" ... "Do not delete empty directories."
+                )
+                .action(ArgAction::SetTrue)
+                .conflicts_with("remove-empty-dir"),
+            )
+            .arg(arg!(--prune ... "Perform the prune action.").action(ArgAction::SetTrue))
+            .arg(arg!(
+                -v --verbose ... "Verbose mode."
+            ));
 
-        let target_path = options
-            .path
-            .clone()
-            .unwrap_or(PathBuf::from("."))
+        let matches = app.get_matches();
+        println!("matches: {:#?}", matches,);
+        println!(
+            "{:#?} = {:#?} && !{:#?}",
+            matches.get_flag("delete") || !matches.get_flag("no-delete"),
+            matches.get_flag("delete"),
+            matches.get_flag("no-delete")
+        );
+
+        let target_path = matches
+            .get_one::<PathBuf>("path")
+            // .clone()
+            .unwrap_or(&PathBuf::from("."))
             .to_path_buf()
             .canonicalize()?;
 
         app_options = AppOptions {
-            enable_deletion: if options.disable_deletion {
-                false
-            } else {
-                options.enable_deletion
-            },
-            enable_hash_matching: if options.disable_hash_matching {
-                false
-            } else {
-                options.enable_hash_matching
-            },
-            // enable_prune_empty_dir: if options.disable_prune_empty_dir {
-            //     false
-            // } else {
-            //     options.enable_prune_empty_dir
-            // },
-            enable_renaming: if options.disable_renaming {
-                false
-            } else {
-                options.enable_renaming
-            },
-            // skip_tmp: if options.no_skip_tmp {
-            //     false
-            // } else {
-            //     options.skip_tmp
-            // },
-            prune: options.prune,
-            verbose: options.verbose,
-            config_file: match options.config {
+            enable_deletion: matches.get_flag("delete") || !matches.get_flag("no-delete"),
+            enable_hash_matching: matches.get_flag("hash") || !matches.get_flag("no-hash"),
+            // enable_prune_empty_dir: matches.get_flag("remove-empty-dir")
+            //     || !matches.get_flag("no-remove-empty-dir"),
+            enable_renaming: matches.get_flag("rename") || !matches.get_flag("no-rename"),
+            // skip_tmp: matches.get_flag("skip-tmp") || !matches.get_flag("no-skip-tmp"),
+            prune: matches.get_flag("prune"),
+            verbose: matches.get_count("verbose"),
+            config_file: match matches.get_one::<PathBuf>("config") {
                 None => guess_path(".cleanup-patterns.yml", get_guess_paths(&target_path)).unwrap(),
-                Some(p) => p,
+                Some(p) => p.clone(),
             },
             target_path,
         };
