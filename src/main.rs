@@ -134,7 +134,7 @@ impl PatternMatcher {
 
                 let hash = format!("{:x}", hasher.finalize());
                 if hash_list.contains(&hash) {
-                    println!(" <== {}:{}", re.to_string(), hash);
+                    // println!(" <== {}:{}", re.to_string(), hash);
                     return (true, Some(format!("{}:{}", re.to_string(), hash)));
                 }
             }
