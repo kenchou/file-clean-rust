@@ -298,17 +298,8 @@ fn main() -> std::io::Result<()> {
             ));
 
         let matches = app.get_matches();
-        println!("matches: {:#?}", matches,);
-        println!(
-            "{:#?} = {:#?} && !{:#?}",
-            matches.get_flag("delete") || !matches.get_flag("no-delete"),
-            matches.get_flag("delete"),
-            matches.get_flag("no-delete")
-        );
-
         let target_path = matches
             .get_one::<PathBuf>("path")
-            // .clone()
             .unwrap_or(&PathBuf::from("."))
             .to_path_buf()
             .canonicalize()?;
