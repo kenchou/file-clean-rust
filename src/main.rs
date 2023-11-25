@@ -221,7 +221,7 @@ fn main() -> std::io::Result<()> {
     {
         // init AppOptions
         let app = command!() // requires `cargo` feature
-            .arg(arg!([path] "target path to clean up"))
+            .arg(arg!([path] "target path to clean up").value_parser(value_parser!(PathBuf)))
             .arg(
                 arg!(-c --config <FILE> "Sets a custom config file")
                     // We don't have syntax yet for optional options, so manually calling `required`
@@ -321,12 +321,15 @@ fn main() -> std::io::Result<()> {
         };
     }
     if app_options.verbose >= 2 {
-        println!("{app_options:#?}");
+        println!("{:#?}", app_options);
     }
 
     let config_file = app_options.config_file;
 
     let pattern_matcher = PatternMatcher::from_config_file(&config_file).unwrap();
+    if app_options.verbose >= 3 {
+        println!("{:#?}", pattern_matcher);
+    }
 
     let mut pending_remove: Vec<(PathBuf, String)> = vec![];
     let mut pending_rename: Vec<(PathBuf, String)> = vec![];
