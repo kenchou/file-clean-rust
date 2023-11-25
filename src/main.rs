@@ -136,10 +136,10 @@ impl PatternMatcher {
                 let mut file = File::open(test_file).unwrap();
                 let mut buffer = Vec::new();
                 file.read_to_end(&mut buffer).unwrap();
-                let mut hasher = Md5::new();
-                hasher.update(&buffer);
+                let mut hash_calculator = Md5::new();
+                hash_calculator.update(&buffer);
 
-                let hash = format!("{:x}", hasher.finalize());
+                let hash = format!("{:x}", hash_calculator.finalize());
                 if hash_list.contains(&hash) {
                     // println!(" <== {}:{}", re.to_string(), hash);
                     return (true, Some(format!("{}:{}", re.to_string(), hash)));
