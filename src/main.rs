@@ -124,8 +124,15 @@ impl PatternMatcher {
     }
 
     fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
+        let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
-            if re.is_match(test_file).unwrap() {
+            // println!(" (--> {:#?}, {:#?})", re, hash_list);
+            // println!(
+            //     " (is_match: {:#?}, {:#?})",
+            //     re.is_match(test_file),
+            //     test_file
+            // );
+            if re.is_match(filename).unwrap() {
                 let mut file = File::open(test_file).unwrap();
                 let mut buffer = Vec::new();
                 file.read_to_end(&mut buffer).unwrap();
@@ -359,6 +366,7 @@ fn main() -> std::io::Result<()> {
             } else if app_options.enable_hash_matching {
                 // test filename and hash
                 (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
+                // println!(" (test hash: {:#?}, {:#?})", matched, pattern);
                 if matched {
                     let p = pattern.unwrap();
                     if app_options.verbose >= 1 {
