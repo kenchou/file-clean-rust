@@ -15,4 +15,5 @@ md-5 = { version = "0.10.6", features = ["md5-asm"] }
 quick-error = "2.0.1"
 serde = { version = "1.0.189", features = ["derive"] }
 serde_yaml = "0.9.25"
+slab_tree = "0.3.2"
 walkdir = "2.4.0"

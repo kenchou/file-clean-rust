@@ -1,4 +1,3 @@
-mod fnmatch_regex;
 use clap::{arg, command, value_parser, ArgAction};
 use colored::*;
 use dirs_next as dirs;
@@ -6,20 +5,35 @@ use fancy_regex::Regex;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use slab_tree::{NodeId, NodeRef, Tree, TreeBuilder};
 use std::collections::HashMap;
 use std::env;
-use std::fs::{remove_dir_all, remove_file, rename, File};
+use std::fs::{read_link, remove_dir_all, remove_file, rename, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
+mod fnmatch_regex;
+
+const GLYPH_ROOT: &str = "📂";
+const GLYPH_DIR: &str = "📁";
+const GLYPH_FILE: &str = "📄";
+const GLYPH_SYMBOL: &str = "🔗";
+const GLYPH_TREE_SPACE: &str = "    ";
+const GLYPH_TREE_BRANCH: &str = "│   ";
+const GLYPH_TEE: &str = "├── ";
+const GLYPH_LAST: &str = "└── ";
+const GLYPH_BROKEN_ARROW: &str = "x->"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
+const GLYPH_LINK_ARROW: &str = "-->";
+
+#[allow(dead_code)]
 #[derive(Debug)]
 struct AppOptions {
     enable_deletion: bool,
     enable_hash_matching: bool,
     enable_renaming: bool,
-    // enable_prune_empty_dir: bool,
-    // skip_tmp: bool,
+    enable_prune_empty_dir: bool,
+    skip_parent_tmp: bool,
     prune: bool,
     verbose: u8,
     config_file: PathBuf,
@@ -223,6 +237,13 @@ fn get_guess_paths(target_path: &PathBuf) -> Vec<PathBuf> {
     guess_paths
 }
 
+#[derive(Debug, PartialEq)]
+enum Operation {
+    NONE,
+    DELETE,
+    RENAME,
+}
+
 fn main() -> std::io::Result<()> {
     let app_options: AppOptions;
     {
@@ -314,10 +335,10 @@ fn main() -> std::io::Result<()> {
         app_options = AppOptions {
             enable_deletion: matches.get_flag("delete") || !matches.get_flag("no-delete"),
             enable_hash_matching: matches.get_flag("hash") || !matches.get_flag("no-hash"),
-            // enable_prune_empty_dir: matches.get_flag("remove-empty-dir")
-            //     || !matches.get_flag("no-remove-empty-dir"),
+            enable_prune_empty_dir: matches.get_flag("remove-empty-dir")
+                || !matches.get_flag("no-remove-empty-dir"),
             enable_renaming: matches.get_flag("rename") || !matches.get_flag("no-rename"),
-            // skip_tmp: matches.get_flag("skip-tmp") || !matches.get_flag("no-skip-tmp"),
+            skip_parent_tmp: matches.get_flag("skip-tmp") || !matches.get_flag("no-skip-tmp"),
             prune: matches.get_flag("prune"),
             verbose: matches.get_count("verbose"),
             config_file: match matches.get_one::<PathBuf>("config") {
@@ -329,6 +350,10 @@ fn main() -> std::io::Result<()> {
     }
     if app_options.verbose >= 2 {
         println!("{:#?}", app_options);
+        // println!(
+        //     "target_path.parts: {:#?}",
+        //     app_options.target_path.components()
+        // )
     }
 
     let config_file = app_options.config_file;
@@ -338,30 +363,29 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", pattern_matcher);
     }
 
-    let mut pending_remove: Vec<(PathBuf, String)> = vec![];
-    let mut pending_rename: Vec<(PathBuf, String)> = vec![];
-    for entry in WalkDir::new(app_options.target_path)
+    let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path: Pattern
+    for entry in WalkDir::new(&app_options.target_path)
         .into_iter()
         .filter_entry(|e| is_not_hidden(e))
         .filter_map(|e| e.ok())
     {
         let filepath = entry.path();
         let filename = entry.file_name().to_str().unwrap();
-        let depth = entry.depth();
-        let prefix = " ".repeat(depth * 4);
+        // let depth = entry.depth();
+        // let prefix = GLYPH_TREE_BRANCH.repeat(depth);
 
-        if app_options.verbose >= 1 {
-            print!("{}├── {}", prefix, filename);
-        }
+        // if app_options.verbose >= 1 {
+        //     print!("{}├── {}", prefix, filename);
+        // }
 
         if app_options.enable_deletion {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
-                if app_options.verbose >= 1 {
-                    println!(" <== {}", p);
-                }
-                pending_remove.push((filepath.to_path_buf(), p));
+                // if app_options.verbose >= 1 {
+                //     println!(" <== {}", p);
+                // }
+                operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
                 continue;
             } else if app_options.enable_hash_matching {
                 // test filename and hash
@@ -369,10 +393,10 @@ fn main() -> std::io::Result<()> {
                 // println!(" (test hash: {:#?}, {:#?})", matched, pattern);
                 if matched {
                     let p = pattern.unwrap();
-                    if app_options.verbose >= 1 {
-                        println!(" <== {}", p);
-                    }
-                    pending_remove.push((filepath.to_path_buf(), p));
+                    // if app_options.verbose >= 1 {
+                    //     println!(" <== {}", p);
+                    // }
+                    operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
                     continue;
                 }
             }
@@ -381,34 +405,53 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                if app_options.verbose >= 1 {
-                    println!(" ==> {new_filename:#?}");
-                }
-                pending_rename.push((filepath.to_path_buf(), new_filename));
+                // if app_options.verbose >= 1 {
+                //     println!(" ==> {new_filename:#?}");
+                // }
+                operation_list.push((filepath.to_path_buf(), new_filename, Operation::RENAME));
                 continue;
             }
         }
-        if app_options.verbose >= 1 {
-            println!();
-        }
+        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::NONE));
+        // if app_options.verbose >= 1 {
+        //     println!();
+        // }
     }
 
-    if app_options.verbose >= 2 {
-        println!("files to delete: {pending_remove:#?}");
-        println!("files to rename: {pending_rename:#?}");
-    }
+    // if app_options.verbose >= 2 {
+    //     println!(
+    //         "files to delete: {:#?}",
+    //         operation_list
+    //             .iter()
+    //             .filter(|(_, _, op)| *op == Operation::DELETE)
+    //             .collect::<Vec<_>>()
+    //     );
+    //     println!(
+    //         "files to rename: {:#?}",
+    //         operation_list
+    //             .iter()
+    //             .filter(|(_, _, op)| *op == Operation::RENAME)
+    //             .collect::<Vec<_>>()
+    //     );
+    // }
 
     if app_options.enable_deletion {
-        for (file_path, pattern) in pending_remove {
+        for (file_path, pattern, _) in operation_list
+            .iter()
+            .filter(|(_, _, op)| *op == Operation::DELETE)
+        {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
             if app_options.prune {
-                remove_path(file_path)?;
+                remove_path(file_path.clone())?;
             }
         }
     }
 
     if app_options.enable_renaming {
-        for (file_path, new_file_name) in pending_rename {
+        for (file_path, new_file_name, _) in operation_list
+            .iter()
+            .filter(|(_, _, op)| *op == Operation::RENAME)
+        {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
             new_filepath.set_file_name(new_file_name);
@@ -417,6 +460,21 @@ fn main() -> std::io::Result<()> {
                 rename(file_path, new_filepath)?;
             }
         }
+    }
+
+    if app_options.verbose >= 1 {
+        let path_list = WalkDir::new(&app_options.target_path)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(&app_options.target_path)
+                    .unwrap()
+                    .to_path_buf()
+            })
+            .collect();
+        print_tree(path_list_to_tree(&path_list, &app_options.target_path));
     }
     Ok(())
 }
@@ -462,4 +520,108 @@ fn remove_path(path: PathBuf) -> io::Result<()> {
         Ok(()) => Ok(()),
         Err(_) => remove_dir_all(path),
     }
+}
+
+fn symbol_link_status(symbol_link_path: &PathBuf) -> io::Result<(bool, PathBuf)> {
+    let target = read_link(&symbol_link_path)?;
+    let target_path = symbol_link_path.parent().unwrap().join(&target);
+    Ok((target_path.exists(), target))
+}
+
+fn path_list_to_tree(path_list: &Vec<PathBuf>, root_path: &PathBuf) -> Tree<String> {
+    let mut tree = TreeBuilder::new()
+        .with_root(format!("[root]{}", root_path.as_os_str().to_string_lossy()))
+        .build();
+    let mut node_ids: HashMap<String, NodeId> = HashMap::new();
+    let root_id = tree.root_id().unwrap();
+    node_ids.insert("".to_string(), root_id);
+
+    for path in path_list {
+        // 遍历路径的每个组件，并将每个组件添加为新的子节点
+        let mut parent_id = root_id;
+
+        let mut parent_path = PathBuf::new();
+        for p in path.components() {
+            parent_path.push(p);
+            let parent_path_str = parent_path.as_os_str().to_string_lossy().into_owned();
+            // println!("{}", parent_path.display());
+            let component_str = p.as_os_str().to_string_lossy().into_owned();
+
+            // 检查这个组件是否已经存在
+            if let Some(node_id) = node_ids.get(&parent_path_str) {
+                // 如果存在，则移动到下级节点
+                parent_id = *node_id;
+            } else {
+                // 如果不存在，则添加新的节点
+                // println!("--> {:#?}", parent_path);
+                let full_path = root_path.join(&parent_path);
+                let (icon, name) = if full_path.is_symlink() {
+                    (
+                        GLYPH_SYMBOL,
+                        match symbol_link_status(&full_path) {
+                            Ok((is_valid, _target)) => {
+                                format!(
+                                    "{} {} {}",
+                                    component_str,
+                                    if is_valid {
+                                        GLYPH_LINK_ARROW
+                                    } else {
+                                        GLYPH_BROKEN_ARROW
+                                    },
+                                    _target.display()
+                                )
+                            } // express result
+                            Err(_err) => "<read link ERROR>".to_string(), // express result
+                        },
+                    )
+                } else if full_path.is_file() {
+                    (GLYPH_FILE, component_str)
+                } else if full_path.is_dir() {
+                    (GLYPH_DIR, component_str)
+                } else {
+                    ("XXXX", component_str)
+                };
+
+                let mut parent = tree.get_mut(parent_id).unwrap();
+                let new_node = parent.append(format!("{} {}", icon, name));
+                node_ids.insert(parent_path_str, new_node.node_id());
+                parent_id = new_node.node_id();
+            }
+        }
+    }
+    return tree;
+}
+
+fn print_tree(tree: Tree<String>) {
+    let root_id = tree.root_id().unwrap();
+    let root = tree.get(root_id).unwrap();
+
+    // 递归地遍历树的每个节点
+    fn traverse(node: &NodeRef<String>, prefix: &str) {
+        let pointer = if node.parent().is_none() {
+            // 根节点
+            GLYPH_ROOT
+        } else if node.next_sibling().is_none() {
+            // 最后一条
+            GLYPH_LAST
+        } else {
+            GLYPH_TEE
+        };
+        println!("{}{}{}", prefix, pointer, node.data());
+
+        let prefix = format!(
+            "{}{}",
+            prefix,
+            if node.next_sibling().is_none() {
+                GLYPH_TREE_SPACE
+            } else {
+                GLYPH_TREE_BRANCH
+            }
+        );
+        for child in node.children() {
+            traverse(&child, &prefix);
+        }
+    }
+
+    traverse(&root, "");
 }
