@@ -370,16 +370,16 @@ fn main() -> std::io::Result<()> {
     let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path, Pattern, Operation
     for entry in WalkDir::new(&app_options.target_path)
         .contents_first(true)
-        .into_iter()
-        .filter_entry(|e| is_not_hidden(e))
-        .filter_map(|e| e.ok())
-        .sorted_by(|a, b| {
+        .sort_by(|a, b| {
             let is_dir_a = !a.file_type().is_dir() as i8;
             let is_dir_b = !b.file_type().is_dir() as i8;
             is_dir_a
                 .cmp(&is_dir_b)
                 .then(a.file_name().cmp(&b.file_name()))
         })
+        .into_iter()
+        .filter_entry(|e| is_not_hidden(e))
+        .filter_map(|e| e.ok())
     {
         let filepath = entry.path();
         let filename = entry.file_name().to_str().unwrap();
