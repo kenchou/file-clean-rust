@@ -2,7 +2,6 @@ use clap::{arg, command, value_parser, ArgAction};
 use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
-use itertools::Itertools;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
