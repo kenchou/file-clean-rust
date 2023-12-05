@@ -3,8 +3,6 @@ use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
 use md5::{Digest, Md5};
-use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
 use slab_tree::{NodeId, NodeRef, Tree, TreeBuilder};
 use std::collections::HashMap;
 use std::env;
@@ -27,6 +25,13 @@ const SYMBOL_LINK: &str = "🔗";
 const SYMBOL_BROKEN_ARROW: &str = "!>"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
 const SYMBOL_LINK_ARROW: &str = "->";
 
+#[derive(Debug, PartialEq)]
+enum Operation {
+    NONE,
+    DELETE,
+    RENAME,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 struct AppOptions {
@@ -48,7 +53,7 @@ impl AppOptions {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct PatternsConfig {
     remove: Vec<String>,
     remove_hash: HashMap<String, Vec<String>>,
@@ -58,7 +63,7 @@ struct PatternsConfig {
 impl PatternsConfig {
     fn from_config_file(config_file: &Path) -> PatternsConfig {
         let file = File::open(&config_file).expect("Cannot open file!");
-        let values: HashMap<String, Value> = serde_yaml::from_reader(file).unwrap();
+        let values: HashMap<String, serde_yaml::Value> = serde_yaml::from_reader(file).unwrap();
         let mut config = PatternsConfig {
             remove: vec![],
             remove_hash: HashMap::new(),
@@ -67,10 +72,10 @@ impl PatternsConfig {
         for (key, value) in values {
             match key.as_str() {
                 "remove" => match value {
-                    Value::String(s) => config
+                    serde_yaml::Value::String(s) => config
                         .remove
                         .extend(s.lines().map(|v| v.trim().to_string()).collect::<Vec<_>>()),
-                    Value::Sequence(s) => config.remove.extend(
+                    serde_yaml::Value::Sequence(s) => config.remove.extend(
                         s.iter()
                             .map(|v| v.as_str().unwrap().to_string())
                             .collect::<Vec<_>>(),
@@ -78,13 +83,13 @@ impl PatternsConfig {
                     _ => {}
                 },
                 "remove_hash" => match value {
-                    Value::Mapping(map) => config.remove_hash.extend(
+                    serde_yaml::Value::Mapping(map) => config.remove_hash.extend(
                         map.iter()
                             .map(|(k, v)| {
                                 (
                                     k.as_str().unwrap().to_string(),
                                     match v {
-                                        Value::Sequence(hash_list) => hash_list
+                                        serde_yaml::Value::Sequence(hash_list) => hash_list
                                             .into_iter()
                                             .map(|vv| vv.as_str().unwrap().to_string())
                                             .collect(),
@@ -97,10 +102,10 @@ impl PatternsConfig {
                     _ => {}
                 },
                 "cleanup" => match value {
-                    Value::String(s) => config
+                    serde_yaml::Value::String(s) => config
                         .cleanup
                         .extend(s.lines().map(|v| v.trim().to_string()).collect::<Vec<_>>()),
-                    Value::Sequence(s) => config.cleanup.extend(
+                    serde_yaml::Value::Sequence(s) => config.cleanup.extend(
                         s.iter()
                             .map(|v| v.as_str().unwrap().to_string())
                             .collect::<Vec<_>>(),
@@ -148,12 +153,6 @@ impl PatternMatcher {
     fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
         let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
-            // println!(" (--> {:#?}, {:#?})", re, hash_list);
-            // println!(
-            //     " (is_match: {:#?}, {:#?})",
-            //     re.is_match(test_file),
-            //     test_file
-            // );
             if re.is_match(filename).unwrap() {
                 let mut file = File::open(test_file).unwrap();
                 let mut buffer = Vec::new();
@@ -163,7 +162,6 @@ impl PatternMatcher {
 
                 let hash = format!("{:x}", hash_calculator.finalize());
                 if hash_list.contains(&hash) {
-                    // println!(" <== {}:{}", re.to_string(), hash);
                     return (true, Some(format!("{}:{}", re.to_string(), hash)));
                 }
             }
@@ -192,7 +190,7 @@ impl PatternMatcher {
  * 创建正则表达式列表，通配符形式转为正则表达式
  */
 fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
-    let regexes: Vec<Regex> = patterns
+    let regex_list: Vec<Regex> = patterns
         .iter()
         .map(|pattern| {
             let pattern = pattern.trim();
@@ -204,21 +202,21 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
             }
         })
         .collect();
-    Ok(regexes)
+    Ok(regex_list)
 }
 
 /**
  * 创建正则表达式列表
  */
 fn create_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
-    let regexes: Vec<Regex> = patterns
+    let regex_list: Vec<Regex> = patterns
         .iter()
         .map(|pattern| {
             // println!("---> {:#?}", pattern);
             Regex::new(pattern.trim()).unwrap()
         })
         .collect();
-    Ok(regexes)
+    Ok(regex_list)
 }
 
 fn create_patterns_with_hash(
@@ -245,11 +243,40 @@ fn get_guess_paths(target_path: &PathBuf) -> Vec<PathBuf> {
     guess_paths
 }
 
-#[derive(Debug, PartialEq)]
-enum Operation {
-    NONE,
-    DELETE,
-    RENAME,
+fn is_not_hidden(entry: &DirEntry) -> bool {
+    entry.file_name().to_string_lossy() != ".tmp"
+        && entry.path().parent().map_or(true, |p| {
+            p.file_name()
+                .map_or(true, |p| p.to_string_lossy() != ".tmp")
+        })
+}
+
+fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf> {
+    if guess_paths.is_empty() {
+        if let Ok(cwd) = env::current_dir() {
+            guess_paths.push(cwd);
+        }
+        if let Some(home_dir) = dirs::home_dir() {
+            guess_paths.push(home_dir);
+        }
+    }
+    for p in dedup_vec(&guess_paths) {
+        let file_path = p.join(&test_file);
+        if file_path.is_file() {
+            return Some(file_path);
+        }
+    }
+    None
+}
+
+fn dedup_vec(v: &Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut new_vec = Vec::new();
+    for i in v {
+        if !new_vec.contains(i) {
+            new_vec.push(i.to_path_buf());
+        }
+    }
+    return new_vec;
 }
 
 fn main() -> std::io::Result<()> {
@@ -444,57 +471,10 @@ fn main() -> std::io::Result<()> {
 
     // dir tree
     if app_options.verbose >= 1 {
-        // let path_list = WalkDir::new(&app_options.target_path)
-        //     .contents_first(true)
-        //     .into_iter()
-        //     .filter_map(|entry| entry.ok())
-        //     .map(|entry| {
-        //         entry
-        //             .path()
-        //             .strip_prefix(&app_options.target_path)
-        //             .unwrap()
-        //             .to_path_buf()
-        //     })
-        //     .collect();
         print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
+
     Ok(())
-}
-
-fn is_not_hidden(entry: &DirEntry) -> bool {
-    entry.file_name().to_string_lossy() != ".tmp"
-        && entry.path().parent().map_or(true, |p| {
-            p.file_name()
-                .map_or(true, |p| p.to_string_lossy() != ".tmp")
-        })
-}
-
-fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf> {
-    if guess_paths.is_empty() {
-        if let Ok(cwd) = env::current_dir() {
-            guess_paths.push(cwd);
-        }
-        if let Some(home_dir) = dirs::home_dir() {
-            guess_paths.push(home_dir);
-        }
-    }
-    for p in dedup_vec(&guess_paths) {
-        let file_path = p.join(&test_file);
-        if file_path.is_file() {
-            return Some(file_path);
-        }
-    }
-    None
-}
-
-fn dedup_vec(v: &Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut new_vec = Vec::new();
-    for i in v {
-        if !new_vec.contains(i) {
-            new_vec.push(i.to_path_buf());
-        }
-    }
-    return new_vec;
 }
 
 fn remove_path(path: PathBuf) -> io::Result<()> {
