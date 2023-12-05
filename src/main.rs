@@ -2,6 +2,7 @@ use clap::{arg, command, value_parser, ArgAction};
 use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
+use itertools::Itertools;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -15,16 +16,17 @@ use walkdir::{DirEntry, WalkDir};
 
 mod fnmatch_regex;
 
-const GLYPH_ROOT: &str = "📂";
-const GLYPH_DIR: &str = "📁";
-const GLYPH_FILE: &str = "📄";
-const GLYPH_SYMBOL: &str = "🔗";
 const GLYPH_TREE_SPACE: &str = "    ";
 const GLYPH_TREE_BRANCH: &str = "│   ";
 const GLYPH_TEE: &str = "├── ";
 const GLYPH_LAST: &str = "└── ";
-const GLYPH_BROKEN_ARROW: &str = "x->"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
-const GLYPH_LINK_ARROW: &str = "-->";
+
+const SYMBOL_ROOT: &str = "📂";
+const SYMBOL_DIR: &str = "📁";
+const SYMBOL_FILE: &str = "📄";
+const SYMBOL_LINK: &str = "🔗";
+const SYMBOL_BROKEN_ARROW: &str = "!>"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
+const SYMBOL_LINK_ARROW: &str = "->";
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -38,6 +40,13 @@ struct AppOptions {
     verbose: u8,
     config_file: PathBuf,
     target_path: PathBuf,
+}
+
+#[allow(dead_code)]
+impl AppOptions {
+    fn is_debug_mode(&self) -> bool {
+        return self.verbose >= 3;
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -246,8 +255,8 @@ enum Operation {
 
 fn main() -> std::io::Result<()> {
     let app_options: AppOptions;
+    // init AppOptions
     {
-        // init AppOptions
         let app = command!() // requires `cargo` feature
             .arg(arg!([path] "target path to clean up").value_parser(value_parser!(PathBuf)))
             .arg(
@@ -348,54 +357,44 @@ fn main() -> std::io::Result<()> {
             target_path,
         };
     }
-    if app_options.verbose >= 2 {
+
+    if app_options.is_debug_mode() {
         println!("{:#?}", app_options);
-        // println!(
-        //     "target_path.parts: {:#?}",
-        //     app_options.target_path.components()
-        // )
     }
 
-    let config_file = app_options.config_file;
-
-    let pattern_matcher = PatternMatcher::from_config_file(&config_file).unwrap();
-    if app_options.verbose >= 3 {
+    let pattern_matcher = PatternMatcher::from_config_file(&app_options.config_file).unwrap();
+    if app_options.is_debug_mode() {
         println!("{:#?}", pattern_matcher);
     }
 
-    let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path: Pattern
+    let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path, Pattern, Operation
     for entry in WalkDir::new(&app_options.target_path)
+        .contents_first(true)
         .into_iter()
         .filter_entry(|e| is_not_hidden(e))
         .filter_map(|e| e.ok())
+        .sorted_by(|a, b| {
+            let is_dir_a = !a.file_type().is_dir() as i8;
+            let is_dir_b = !b.file_type().is_dir() as i8;
+            is_dir_a
+                .cmp(&is_dir_b)
+                .then(a.file_name().cmp(&b.file_name()))
+        })
     {
         let filepath = entry.path();
         let filename = entry.file_name().to_str().unwrap();
-        // let depth = entry.depth();
-        // let prefix = GLYPH_TREE_BRANCH.repeat(depth);
-
-        // if app_options.verbose >= 1 {
-        //     print!("{}├── {}", prefix, filename);
-        // }
 
         if app_options.enable_deletion {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
-                // if app_options.verbose >= 1 {
-                //     println!(" <== {}", p);
-                // }
                 operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
                 continue;
             } else if app_options.enable_hash_matching {
                 // test filename and hash
                 (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
-                // println!(" (test hash: {:#?}, {:#?})", matched, pattern);
                 if matched {
                     let p = pattern.unwrap();
-                    // if app_options.verbose >= 1 {
-                    //     println!(" <== {}", p);
-                    // }
                     operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
                     continue;
                 }
@@ -405,35 +404,13 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                // if app_options.verbose >= 1 {
-                //     println!(" ==> {new_filename:#?}");
-                // }
                 operation_list.push((filepath.to_path_buf(), new_filename, Operation::RENAME));
                 continue;
             }
         }
-        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::NONE));
-        // if app_options.verbose >= 1 {
-        //     println!();
-        // }
-    }
 
-    // if app_options.verbose >= 2 {
-    //     println!(
-    //         "files to delete: {:#?}",
-    //         operation_list
-    //             .iter()
-    //             .filter(|(_, _, op)| *op == Operation::DELETE)
-    //             .collect::<Vec<_>>()
-    //     );
-    //     println!(
-    //         "files to rename: {:#?}",
-    //         operation_list
-    //             .iter()
-    //             .filter(|(_, _, op)| *op == Operation::RENAME)
-    //             .collect::<Vec<_>>()
-    //     );
-    // }
+        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::NONE));
+    }
 
     if app_options.enable_deletion {
         for (file_path, pattern, _) in operation_list
@@ -462,19 +439,25 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    if app_options.is_debug_mode() {
+        println!("{:#?}", operation_list);
+    }
+
+    // dir tree
     if app_options.verbose >= 1 {
-        let path_list = WalkDir::new(&app_options.target_path)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| {
-                entry
-                    .path()
-                    .strip_prefix(&app_options.target_path)
-                    .unwrap()
-                    .to_path_buf()
-            })
-            .collect();
-        print_tree(path_list_to_tree(&path_list, &app_options.target_path));
+        // let path_list = WalkDir::new(&app_options.target_path)
+        //     .contents_first(true)
+        //     .into_iter()
+        //     .filter_map(|entry| entry.ok())
+        //     .map(|entry| {
+        //         entry
+        //             .path()
+        //             .strip_prefix(&app_options.target_path)
+        //             .unwrap()
+        //             .to_path_buf()
+        //     })
+        //     .collect();
+        print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
     Ok(())
 }
@@ -528,7 +511,10 @@ fn symbol_link_status(symbol_link_path: &PathBuf) -> io::Result<(bool, PathBuf)>
     Ok((target_path.exists(), target))
 }
 
-fn path_list_to_tree(path_list: &Vec<PathBuf>, root_path: &PathBuf) -> Tree<String> {
+fn path_list_to_tree(
+    path_list: &Vec<(PathBuf, String, Operation)>,
+    root_path: &PathBuf,
+) -> Tree<String> {
     let mut tree = TreeBuilder::new()
         .with_root(format!("[root]{}", root_path.as_os_str().to_string_lossy()))
         .build();
@@ -536,12 +522,12 @@ fn path_list_to_tree(path_list: &Vec<PathBuf>, root_path: &PathBuf) -> Tree<Stri
     let root_id = tree.root_id().unwrap();
     node_ids.insert("".to_string(), root_id);
 
-    for path in path_list {
+    for (path, _pattern, _op) in path_list {
         // 遍历路径的每个组件，并将每个组件添加为新的子节点
         let mut parent_id = root_id;
 
         let mut parent_path = PathBuf::new();
-        for p in path.components() {
+        for p in path.strip_prefix(root_path).unwrap().components() {
             parent_path.push(p);
             let parent_path_str = parent_path.as_os_str().to_string_lossy().into_owned();
             // println!("{}", parent_path.display());
@@ -557,16 +543,16 @@ fn path_list_to_tree(path_list: &Vec<PathBuf>, root_path: &PathBuf) -> Tree<Stri
                 let full_path = root_path.join(&parent_path);
                 let (icon, name) = if full_path.is_symlink() {
                     (
-                        GLYPH_SYMBOL,
+                        SYMBOL_LINK,
                         match symbol_link_status(&full_path) {
                             Ok((is_valid, _target)) => {
                                 format!(
                                     "{} {} {}",
                                     component_str,
                                     if is_valid {
-                                        GLYPH_LINK_ARROW
+                                        SYMBOL_LINK_ARROW.normal()
                                     } else {
-                                        GLYPH_BROKEN_ARROW
+                                        SYMBOL_BROKEN_ARROW.magenta()
                                     },
                                     _target.display()
                                 )
@@ -575,9 +561,9 @@ fn path_list_to_tree(path_list: &Vec<PathBuf>, root_path: &PathBuf) -> Tree<Stri
                         },
                     )
                 } else if full_path.is_file() {
-                    (GLYPH_FILE, component_str)
+                    (SYMBOL_FILE, component_str)
                 } else if full_path.is_dir() {
-                    (GLYPH_DIR, component_str)
+                    (SYMBOL_DIR, component_str + "/")
                 } else {
                     ("XXXX", component_str)
                 };
@@ -600,7 +586,7 @@ fn print_tree(tree: Tree<String>) {
     fn traverse(node: &NodeRef<String>, prefix: &str) {
         let pointer = if node.parent().is_none() {
             // 根节点
-            GLYPH_ROOT
+            SYMBOL_ROOT
         } else if node.next_sibling().is_none() {
             // 最后一条
             GLYPH_LAST
