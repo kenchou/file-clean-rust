@@ -395,12 +395,12 @@ fn main() -> std::io::Result<()> {
 
     let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path, Pattern, Operation
     for entry in WalkDir::new(&app_options.target_path)
-        .contents_first(true)
         .sort_by(|a, b| {
-            let is_dir_a = !a.file_type().is_dir() as i8;
-            let is_dir_b = !b.file_type().is_dir() as i8;
+            let is_dir_a = a.file_type().is_dir() as i8;
+            let is_dir_b = b.file_type().is_dir() as i8;
             is_dir_a
                 .cmp(&is_dir_b)
+                .reverse()
                 .then(a.file_name().cmp(&b.file_name()))
         })
         .into_iter()
