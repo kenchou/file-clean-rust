@@ -437,9 +437,30 @@ fn main() -> std::io::Result<()> {
             }
         }
 
+        if app_options.enable_prune_empty_dir
+            && filepath.is_dir()
+            && filepath.read_dir()?.next().is_none()
+        {
+            operation_list.push((
+                filepath.to_path_buf(),
+                "<EMPTY_DIR>".to_string(),
+                Operation::DELETE,
+            ))
+        }
+
         operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::NONE));
     }
 
+    if app_options.is_debug_mode() {
+        println!("{:#?}", operation_list);
+    }
+
+    // dir tree
+    if app_options.verbose >= 1 {
+        print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
+    }
+
+    // execute
     if app_options.enable_deletion {
         for (file_path, pattern, _) in operation_list
             .iter()
@@ -465,15 +486,6 @@ fn main() -> std::io::Result<()> {
                 rename(file_path, new_filepath)?;
             }
         }
-    }
-
-    if app_options.is_debug_mode() {
-        println!("{:#?}", operation_list);
-    }
-
-    // dir tree
-    if app_options.verbose >= 1 {
-        print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
 
     Ok(())
