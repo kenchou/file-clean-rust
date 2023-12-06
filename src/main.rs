@@ -24,6 +24,8 @@ const SYMBOL_FILE: &str = "📄";
 const SYMBOL_LINK: &str = "🔗";
 const SYMBOL_BROKEN_ARROW: &str = "!>"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
 const SYMBOL_LINK_ARROW: &str = "->";
+const SYMBOL_DELETE: &str = "[-]"; // ␡
+const SYMBOL_RENAME: &str = "[*]"; //
 
 #[derive(Debug, PartialEq)]
 enum Operation {
@@ -497,13 +499,13 @@ fn path_list_to_tree(
     let mut tree = TreeBuilder::new()
         .with_root(format!("[root]{}", root_path.as_os_str().to_string_lossy()))
         .build();
-    let mut node_ids: HashMap<String, NodeId> = HashMap::new();
+    let mut path_node_id_map: HashMap<String, NodeId> = HashMap::new();
     let root_id = tree.root_id().unwrap();
-    node_ids.insert("".to_string(), root_id);
+    path_node_id_map.insert("".to_string(), root_id);
 
     for (path, _pattern, _op) in path_list {
         // 遍历路径的每个组件，并将每个组件添加为新的子节点
-        let mut parent_id = root_id;
+        let mut current_node_id = root_id;
 
         let mut parent_path = PathBuf::new();
         for p in path.strip_prefix(root_path).unwrap().components() {
@@ -513,9 +515,9 @@ fn path_list_to_tree(
             let component_str = p.as_os_str().to_string_lossy().into_owned();
 
             // 检查这个组件是否已经存在
-            if let Some(node_id) = node_ids.get(&parent_path_str) {
+            if let Some(node_id) = path_node_id_map.get(&parent_path_str) {
                 // 如果存在，则移动到下级节点
-                parent_id = *node_id;
+                current_node_id = *node_id;
             } else {
                 // 如果不存在，则添加新的节点
                 // println!("--> {:#?}", parent_path);
@@ -547,11 +549,27 @@ fn path_list_to_tree(
                     ("XXXX", component_str)
                 };
 
-                let mut parent = tree.get_mut(parent_id).unwrap();
+                let mut parent = tree.get_mut(current_node_id).unwrap();
                 let new_node = parent.append(format!("{} {}", icon, name));
-                node_ids.insert(parent_path_str, new_node.node_id());
-                parent_id = new_node.node_id();
+                path_node_id_map.insert(parent_path_str, new_node.node_id());
+                current_node_id = new_node.node_id();
             }
+        }
+        // println!("[DEBUG] {:#?}, {:#?}, {:#?}", parent_path, _pattern, _op);
+        let _node_id = path_node_id_map
+            .get(&parent_path.as_os_str().to_string_lossy().into_owned())
+            .unwrap();
+        let mut _node = tree.get_mut(*_node_id).unwrap();
+        match _op {
+            Operation::DELETE => {
+                let node_data = _node.data();
+                *node_data = format!("{} {} <= {}", node_data, SYMBOL_DELETE.red(), _pattern);
+            }
+            Operation::RENAME => {
+                let node_data = _node.data();
+                *node_data = format!("{} {} => {}", node_data, SYMBOL_RENAME.yellow(), _pattern);
+            }
+            _ => {}
         }
     }
     return tree;
