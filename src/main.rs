@@ -34,7 +34,6 @@ enum Operation {
     RENAME,
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct AppOptions {
     enable_deletion: bool,
@@ -48,7 +47,6 @@ struct AppOptions {
     target_path: PathBuf,
 }
 
-#[allow(dead_code)]
 impl AppOptions {
     fn is_debug_mode(&self) -> bool {
         return self.verbose >= 3;
@@ -406,7 +404,7 @@ fn main() -> std::io::Result<()> {
                 .then(a.file_name().cmp(&b.file_name()))
         })
         .into_iter()
-        .filter_entry(|e| is_not_hidden(e))
+        .filter_entry(|e| !app_options.skip_parent_tmp || is_not_hidden(e))
         .filter_map(|e| e.ok())
     {
         let filepath = entry.path();
