@@ -131,7 +131,7 @@ impl PatternMatcher {
     fn from_config_file(config_file: &Path) -> PatternMatcher {
         let config = PatternsConfig::from_config_file(config_file);
         let patterns_to_remove =
-            create_mixed_regex_list(config.remove.iter().map(AsRef::as_ref).collect()).unwrap();
+            create_mixed_regex_list(config.remove.iter().map(AsRef::as_ref).collect());
         let patterns_to_rename =
             create_regex_list(config.cleanup.iter().map(AsRef::as_ref).collect());
         let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash);
@@ -190,8 +190,8 @@ impl PatternMatcher {
 /**
  * 创建正则表达式列表，通配符形式转为正则表达式
  */
-fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
-    let regex_list: Vec<Regex> = patterns
+fn create_mixed_regex_list(patterns: Vec<&str>) -> Vec<Regex> {
+    patterns
         .iter()
         .map(|pattern| {
             let pattern = pattern.trim();
@@ -202,22 +202,20 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
                 Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
             }
         })
-        .collect();
-    Ok(regex_list)
+        .collect()
 }
 
 /**
  * 创建正则表达式列表
  */
 fn create_regex_list(patterns: Vec<&str>) -> Vec<Regex> {
-    let regex_list: Vec<Regex> = patterns
+    patterns
         .iter()
         .map(|pattern| {
             // println!("---> {:#?}", pattern);
             Regex::new(pattern.trim()).unwrap()
         })
-        .collect();
-    regex_list
+        .collect()
 }
 
 fn create_patterns_with_hash(patterns: HashMap<String, Vec<String>>) -> Vec<(Regex, Vec<String>)> {
