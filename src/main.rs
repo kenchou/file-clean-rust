@@ -29,9 +29,9 @@ const SYMBOL_RENAME: &str = "[*]"; //
 
 #[derive(Debug, PartialEq)]
 enum Operation {
-    NONE,
-    DELETE,
-    RENAME,
+    None,
+    Delete,
+    Rename,
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ struct AppOptions {
 
 impl AppOptions {
     fn is_debug_mode(&self) -> bool {
-        return self.verbose >= 3;
+        self.verbose >= 3
     }
 }
 
@@ -62,7 +62,7 @@ struct PatternsConfig {
 
 impl PatternsConfig {
     fn from_config_file(config_file: &Path) -> PatternsConfig {
-        let file = File::open(&config_file).expect("Cannot open file!");
+        let file = File::open(config_file).expect("Cannot open file!");
         let values: HashMap<String, serde_yaml::Value> = serde_yaml::from_reader(file).unwrap();
         let mut config = PatternsConfig {
             remove: vec![],
@@ -82,25 +82,26 @@ impl PatternsConfig {
                     ),
                     _ => {}
                 },
-                "remove_hash" => match value {
-                    serde_yaml::Value::Mapping(map) => config.remove_hash.extend(
-                        map.iter()
-                            .map(|(k, v)| {
-                                (
-                                    k.as_str().unwrap().to_string(),
-                                    match v {
-                                        serde_yaml::Value::Sequence(hash_list) => hash_list
-                                            .into_iter()
-                                            .map(|vv| vv.as_str().unwrap().to_string())
-                                            .collect(),
-                                        _ => vec![],
-                                    },
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    ),
-                    _ => {}
-                },
+                "remove_hash" => {
+                    if let serde_yaml::Value::Mapping(map) = value {
+                        config.remove_hash.extend(
+                            map.iter()
+                                .map(|(k, v)| {
+                                    (
+                                        k.as_str().unwrap().to_string(),
+                                        match v {
+                                            serde_yaml::Value::Sequence(hash_list) => hash_list
+                                                .iter()
+                                                .map(|vv| vv.as_str().unwrap().to_string())
+                                                .collect(),
+                                            _ => vec![],
+                                        },
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                }
                 "cleanup" => match value {
                     serde_yaml::Value::String(s) => config
                         .cleanup
@@ -147,7 +148,7 @@ impl PatternMatcher {
                 return (true, Some(re.to_string()));
             }
         }
-        return (false, None);
+        (false, None) // return
     }
 
     fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
@@ -162,11 +163,11 @@ impl PatternMatcher {
 
                 let hash = format!("{:x}", hash_calculator.finalize());
                 if hash_list.contains(&hash) {
-                    return (true, Some(format!("{}:{}", re.to_string(), hash)));
+                    return (true, Some(format!("{}:{}", re, hash)));
                 }
             }
         }
-        return (false, None);
+        (false, None) // return
     }
 
     fn clean_filename(&self, filename: &str) -> String {
@@ -182,7 +183,7 @@ impl PatternMatcher {
         let mut full_path = PathBuf::from(filename.to_string());
         full_path.set_file_name(new_filename);
         let new_filename = full_path.to_str().unwrap().to_string();
-        return new_filename;
+        new_filename // return new_filename
     }
 }
 
@@ -195,7 +196,7 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
         .map(|pattern| {
             let pattern = pattern.trim();
             // println!(">>> {:#?}", pattern);
-            if pattern.starts_with("/") {
+            if pattern.starts_with('/') {
                 Regex::new(&pattern[1..]).unwrap()
             } else {
                 Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
@@ -235,7 +236,7 @@ fn create_patterns_with_hash(
     Ok(patterns_to_remove_with_hash)
 }
 
-fn get_guess_paths(target_path: &PathBuf) -> Vec<PathBuf> {
+fn get_guess_paths(target_path: &Path) -> Vec<PathBuf> {
     let mut guess_paths: Vec<_> = target_path.ancestors().map(Path::to_path_buf).collect();
     if let Some(home_dir) = dirs::home_dir() {
         guess_paths.push(home_dir);
@@ -261,7 +262,7 @@ fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf>
         }
     }
     for p in dedup_vec(&guess_paths) {
-        let file_path = p.join(&test_file);
+        let file_path = p.join(test_file);
         if file_path.is_file() {
             return Some(file_path);
         }
@@ -276,7 +277,7 @@ fn dedup_vec(v: &Vec<PathBuf>) -> Vec<PathBuf> {
             new_vec.push(i.to_path_buf());
         }
     }
-    return new_vec;
+    new_vec // return new_vec;
 }
 
 fn main() -> std::io::Result<()> {
@@ -401,7 +402,7 @@ fn main() -> std::io::Result<()> {
                 .is_dir()
                 .cmp(&b.file_type().is_dir())
                 .reverse()
-                .then(a.file_name().cmp(&b.file_name()))
+                .then(a.file_name().cmp(b.file_name()))
         })
         .into_iter()
         .filter_entry(|e| !app_options.skip_parent_tmp || is_not_hidden(e))
@@ -414,14 +415,14 @@ fn main() -> std::io::Result<()> {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
-                operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
+                operation_list.push((filepath.to_path_buf(), p, Operation::Delete));
                 continue;
             } else if app_options.enable_hash_matching {
                 // test filename and hash
                 (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
                 if matched {
                     let p = pattern.unwrap();
-                    operation_list.push((filepath.to_path_buf(), p, Operation::DELETE));
+                    operation_list.push((filepath.to_path_buf(), p, Operation::Delete));
                     continue;
                 }
             }
@@ -430,7 +431,7 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                operation_list.push((filepath.to_path_buf(), new_filename, Operation::RENAME));
+                operation_list.push((filepath.to_path_buf(), new_filename, Operation::Rename));
                 continue;
             }
         }
@@ -442,11 +443,11 @@ fn main() -> std::io::Result<()> {
             operation_list.push((
                 filepath.to_path_buf(),
                 "<EMPTY_DIR>".to_string(),
-                Operation::DELETE,
+                Operation::Delete,
             ))
         }
 
-        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::NONE));
+        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::None));
     }
 
     if app_options.is_debug_mode() {
@@ -462,7 +463,7 @@ fn main() -> std::io::Result<()> {
     if app_options.enable_deletion {
         for (file_path, pattern, _) in operation_list
             .iter()
-            .filter(|(_, _, op)| *op == Operation::DELETE)
+            .filter(|(_, _, op)| *op == Operation::Delete)
         {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
             if app_options.prune {
@@ -474,7 +475,7 @@ fn main() -> std::io::Result<()> {
     if app_options.enable_renaming {
         for (file_path, new_file_name, _) in operation_list
             .iter()
-            .filter(|(_, _, op)| *op == Operation::RENAME)
+            .filter(|(_, _, op)| *op == Operation::Rename)
         {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
@@ -496,8 +497,8 @@ fn remove_path(path: PathBuf) -> io::Result<()> {
     }
 }
 
-fn symbol_link_status(symbol_link_path: &PathBuf) -> io::Result<(bool, PathBuf)> {
-    let target = read_link(&symbol_link_path)?;
+fn symbol_link_status(symbol_link_path: &Path) -> io::Result<(bool, PathBuf)> {
+    let target = read_link(symbol_link_path)?;
     let target_path = symbol_link_path.parent().unwrap().join(&target);
     Ok((target_path.exists(), target))
 }
@@ -571,18 +572,18 @@ fn path_list_to_tree(
             .unwrap();
         let mut _node = tree.get_mut(*_node_id).unwrap();
         match _op {
-            Operation::DELETE => {
+            Operation::Delete => {
                 let node_data = _node.data();
                 *node_data = format!("{} {} <= {}", node_data, SYMBOL_DELETE.red(), _pattern);
             }
-            Operation::RENAME => {
+            Operation::Rename => {
                 let node_data = _node.data();
                 *node_data = format!("{} {} => {}", node_data, SYMBOL_RENAME.yellow(), _pattern);
             }
             _ => {}
         }
     }
-    return tree;
+    tree // return tree
 }
 
 fn print_tree(tree: Tree<String>) {
