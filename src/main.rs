@@ -128,18 +128,18 @@ struct PatternMatcher {
 }
 
 impl PatternMatcher {
-    fn from_config_file(config_file: &Path) -> Result<PatternMatcher, serde_yaml::Error> {
+    fn from_config_file(config_file: &Path) -> PatternMatcher {
         let config = PatternsConfig::from_config_file(config_file);
         let patterns_to_remove =
             create_mixed_regex_list(config.remove.iter().map(AsRef::as_ref).collect()).unwrap();
         let patterns_to_rename =
-            create_regex_list(config.cleanup.iter().map(AsRef::as_ref).collect()).unwrap();
-        let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash).unwrap();
-        Ok(PatternMatcher {
+            create_regex_list(config.cleanup.iter().map(AsRef::as_ref).collect());
+        let patterns_to_remove_with_hash = create_patterns_with_hash(config.remove_hash);
+        PatternMatcher {
             patterns_to_remove,
             patterns_to_remove_with_hash,
             patterns_to_rename,
-        })
+        }
     }
 
     fn match_remove_pattern(&self, test_file: &str) -> (bool, Option<String>) {
@@ -196,8 +196,8 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
         .map(|pattern| {
             let pattern = pattern.trim();
             // println!(">>> {:#?}", pattern);
-            if pattern.starts_with('/') {
-                Regex::new(&pattern[1..]).unwrap()
+            if let Some(stripped) = pattern.strip_prefix('/') {
+                Regex::new(stripped).unwrap()
             } else {
                 Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
             }
@@ -209,7 +209,7 @@ fn create_mixed_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn st
 /**
  * 创建正则表达式列表
  */
-fn create_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
+fn create_regex_list(patterns: Vec<&str>) -> Vec<Regex> {
     let regex_list: Vec<Regex> = patterns
         .iter()
         .map(|pattern| {
@@ -217,13 +217,11 @@ fn create_regex_list(patterns: Vec<&str>) -> Result<Vec<Regex>, Box<dyn std::err
             Regex::new(pattern.trim()).unwrap()
         })
         .collect();
-    Ok(regex_list)
+    regex_list
 }
 
-fn create_patterns_with_hash(
-    patterns: HashMap<String, Vec<String>>,
-) -> Result<Vec<(Regex, Vec<String>)>, Box<dyn std::error::Error>> {
-    let patterns_to_remove_with_hash = patterns
+fn create_patterns_with_hash(patterns: HashMap<String, Vec<String>>) -> Vec<(Regex, Vec<String>)> {
+    patterns
         .into_iter()
         .map(|(key, value)| {
             // println!("hash --> {}", key);
@@ -232,8 +230,7 @@ fn create_patterns_with_hash(
                 value,
             )
         })
-        .collect();
-    Ok(patterns_to_remove_with_hash)
+        .collect()
 }
 
 fn get_guess_paths(target_path: &Path) -> Vec<PathBuf> {
@@ -267,7 +264,7 @@ fn guess_path(test_file: &str, mut guess_paths: Vec<PathBuf>) -> Option<PathBuf>
             return Some(file_path);
         }
     }
-    None
+    None // return None; if found nothing in paths
 }
 
 fn dedup_vec(v: &Vec<PathBuf>) -> Vec<PathBuf> {
@@ -389,7 +386,7 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", app_options);
     }
 
-    let pattern_matcher = PatternMatcher::from_config_file(&app_options.config_file).unwrap();
+    let pattern_matcher = PatternMatcher::from_config_file(&app_options.config_file);
     if app_options.is_debug_mode() {
         println!("{:#?}", pattern_matcher);
     }
