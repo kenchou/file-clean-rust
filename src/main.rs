@@ -462,7 +462,9 @@ fn main() -> std::io::Result<()> {
         {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
             if app_options.prune {
-                remove_path(file_path.clone())?;
+                if file_path.exists() {
+                    remove_path(file_path.clone())?;
+                }
             }
         }
     }
