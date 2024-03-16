@@ -7,7 +7,7 @@ use slab_tree::{NodeId, NodeRef, Tree, TreeBuilder};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{read_link, remove_dir_all, remove_file, rename, File};
-use std::io::{self, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
@@ -446,7 +446,7 @@ fn main() -> std::io::Result<()> {
     }
 
     if app_options.is_debug_mode() {
-        println!("{:#?}", operation_list);
+        println!("* operation_list: {:#?}", operation_list);
     }
 
     // dir tree
@@ -454,11 +454,14 @@ fn main() -> std::io::Result<()> {
         print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
 
+    operation_list.sort_by(|a, b| {
+        let depth_a = a.0.components().count();
+        let depth_b = b.0.components().count();
+        depth_b.cmp(&depth_a)
+    });
     // execute
     if app_options.enable_deletion {
-        for (file_path, pattern, _) in operation_list
-            .iter()
-            .filter(|(_, _, op)| *op == Operation::Delete)
+        for (file_path, pattern, _) in operation_list.iter().filter(|(_, _, op)| *op == Operation::Delete)
         {
             println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
             if app_options.prune {
@@ -470,9 +473,7 @@ fn main() -> std::io::Result<()> {
     }
 
     if app_options.enable_renaming {
-        for (file_path, new_file_name, _) in operation_list
-            .iter()
-            .filter(|(_, _, op)| *op == Operation::Rename)
+        for (file_path, new_file_name, _) in operation_list.iter().filter(|(_, _, op)| *op == Operation::Rename)
         {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
@@ -487,14 +488,14 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn remove_path(path: PathBuf) -> io::Result<()> {
+fn remove_path(path: PathBuf) -> std::io::Result<()> {
     match remove_file(&path) {
         Ok(()) => Ok(()),
         Err(_) => remove_dir_all(path),
     }
 }
 
-fn symbol_link_status(symbol_link_path: &Path) -> io::Result<(bool, PathBuf)> {
+fn symbol_link_status(symbol_link_path: &Path) -> std::io::Result<(bool, PathBuf)> {
     let target = read_link(symbol_link_path)?;
     let target_path = symbol_link_path.parent().unwrap().join(&target);
     Ok((target_path.exists(), target))
