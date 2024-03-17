@@ -454,6 +454,12 @@ fn main() -> std::io::Result<()> {
         print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
 
+    // Remove the entries that don't require operation.
+    operation_list.retain(|(_, _, op)| match op {
+        Operation::None => false,
+        _ => true,
+    });
+    // Sort the operation list in depth-first order.
     operation_list.sort_by(|a, b| {
         let depth_a = a.0.components().count();
         let depth_b = b.0.components().count();
@@ -555,7 +561,7 @@ fn path_list_to_tree(
                 } else if full_path.is_dir() {
                     (SYMBOL_DIR, component_str + "/")
                 } else {
-                    ("XXXX", component_str)
+                    ("??", component_str)
                 };
 
                 let mut parent = tree.get_mut(current_node_id).unwrap();
