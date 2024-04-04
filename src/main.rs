@@ -469,7 +469,12 @@ fn main() -> std::io::Result<()> {
     if app_options.enable_deletion {
         for (file_path, pattern, _) in operation_list.iter().filter(|(_, _, op)| *op == Operation::Delete)
         {
-            println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
+            if app_options.verbose > 0 {
+                println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
+            } else {
+                println!("{} {:#?}", "[-]".red(), file_path);
+            }
+
             if app_options.prune {
                 if file_path.exists() {
                     remove_path(file_path.clone())?;
