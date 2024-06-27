@@ -450,7 +450,7 @@ fn main() -> std::io::Result<()> {
     }
 
     // dir tree
-    if app_options.verbose >= 1 {
+    if app_options.verbose >= 2 {
         print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
     }
 
