@@ -32,7 +32,7 @@ Options:
   -V, --version              Print version
 ```
 
-eg:
+example:  
 `file-clean-rust ~/Downloads` dry-run and see result  
 `file-clean-rust ~/Downloads --prune` prune the target path and see result
 
