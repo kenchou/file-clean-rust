@@ -1,4 +1,12 @@
 # file-clean-rust
+Clean up (rename/delete) folders and files according to configured rules.
+
+## Motivation
+Resources downloaded through P2P networks usually contain a lot of junk files or padding files.  
+Some clients (such as xunlei) have automatic cleaning features, but aria2 lacks this functionality.  
+Therefore, I wrote a tool to clean up directories and files.
+
+## Usage
 
 ```text
 Usage: file-clean-rust [OPTIONS] [path]
@@ -22,4 +30,22 @@ Options:
   -v, --verbose...           Verbose mode.
   -h, --help                 Print help
   -V, --version              Print version
+```
+
+The default configuration file `.cleanup-patterns.yml` is searched for starting from the specified target path,  
+moving upwards step by step until the root directory is reached.  
+If it is not found, it will then be looked for in the user's home directory.
+
+## Configuration
+
+```yaml
+remove: |-
+  example_filename
+  wildcard*
+remove_hash:
+  "filename_or_wildcard":
+    - md5hash
+cleanup: |-
+  # Notice: regex must start with /.
+  /regex_pattern
 ```
