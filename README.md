@@ -32,11 +32,15 @@ Options:
   -V, --version              Print version
 ```
 
+eg:
+`file-clean-rust ~/Downloads` dry-run and see result  
+`file-clean-rust ~/Downloads --prune` prune the target path and see result
+
+## Configuration
+
 The default configuration file `.cleanup-patterns.yml` is searched for starting from the specified target path,  
 moving upwards step by step until the root directory is reached.  
 If it is not found, it will then be looked for in the user's home directory.
-
-## Configuration
 
 ```yaml
 remove: |-
