@@ -14,9 +14,8 @@ mod pmatcher;
 mod pconfig;
 mod util;
 
-use data::{AppOptions, Operation};
 fn main() -> std::io::Result<()> {
-    let app_options: AppOptions;
+    let app_options: data::AppOptions;
     // init AppOptions
     {
         let app = command!() // requires `cargo` feature
@@ -103,7 +102,7 @@ fn main() -> std::io::Result<()> {
             .to_path_buf()
             .canonicalize()?;
 
-        app_options = AppOptions {
+        app_options = data::AppOptions {
             enable_deletion: matches.get_flag("delete") || !matches.get_flag("no-delete"),
             enable_hash_matching: matches.get_flag("hash") || !matches.get_flag("no-hash"),
             enable_prune_empty_dir: matches.get_flag("remove-empty-dir")
@@ -129,7 +128,7 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", pattern_matcher);
     }
 
-    let mut operation_list: Vec<(PathBuf, String, Operation)> = vec![]; // Path, Pattern, Operation
+    let mut operation_list: Vec<(PathBuf, String, data::Operation)> = vec![]; // Path, Pattern, Operation
     for entry in WalkDir::new(&app_options.target_path)
         // .contents_first(true)
         .sort_by(|a, b| {
@@ -150,14 +149,14 @@ fn main() -> std::io::Result<()> {
             let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
             if matched {
                 let p = pattern.unwrap();
-                operation_list.push((filepath.to_path_buf(), p, Operation::Delete));
+                operation_list.push((filepath.to_path_buf(), p, data::Operation::Delete));
                 continue;
             } else if app_options.enable_hash_matching {
                 // test filename and hash
                 (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
                 if matched {
                     let p = pattern.unwrap();
-                    operation_list.push((filepath.to_path_buf(), p, Operation::Delete));
+                    operation_list.push((filepath.to_path_buf(), p, data::Operation::Delete));
                     continue;
                 }
             }
@@ -166,7 +165,7 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                operation_list.push((filepath.to_path_buf(), new_filename, Operation::Rename));
+                operation_list.push((filepath.to_path_buf(), new_filename, data::Operation::Rename));
                 continue;
             }
         }
@@ -178,11 +177,11 @@ fn main() -> std::io::Result<()> {
             operation_list.push((
                 filepath.to_path_buf(),
                 "<EMPTY_DIR>".to_string(),
-                Operation::Delete,
+                data::Operation::Delete,
             ))
         }
 
-        operation_list.push((filepath.to_path_buf(), "".to_string(), Operation::None));
+        operation_list.push((filepath.to_path_buf(), "".to_string(), data::Operation::None));
     }
 
     if app_options.is_debug_mode() {
@@ -199,7 +198,7 @@ fn main() -> std::io::Result<()> {
 
     // Remove the entries that don't require operation.
     operation_list.retain(|(_, _, op)| match op {
-        Operation::None => false,
+        data::Operation::None => false,
         _ => true,
     });
     // Sort the operation list in depth-first order.
@@ -212,7 +211,7 @@ fn main() -> std::io::Result<()> {
     if app_options.enable_deletion {
         for (file_path, pattern, _) in operation_list
             .iter()
-            .filter(|(_, _, op)| *op == Operation::Delete)
+            .filter(|(_, _, op)| *op == data::Operation::Delete)
         {
             if app_options.verbose > 0 {
                 println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
@@ -229,7 +228,7 @@ fn main() -> std::io::Result<()> {
     if app_options.enable_renaming {
         for (file_path, new_file_name, _) in operation_list
             .iter()
-            .filter(|(_, _, op)| *op == Operation::Rename)
+            .filter(|(_, _, op)| *op == data::Operation::Rename)
         {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
