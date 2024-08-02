@@ -44,12 +44,22 @@ If it is not found, it will then be looked for in the user's home directory.
 
 ```yaml
 remove: |-
-  example_filename
+  # Any line that starts with '#' is treated as a comment.
+  # Match the filename exactly.
+  example_filename.ext
+  # '*' and '?' are wildcards.
   wildcard*
+  # For more complex matching, use regular expressions.
+  # Notice: regex must start with "/".
+  /regex_pattern1
+  /regex_pattern2
 remove_hash:
   "filename_or_wildcard":
     - md5hash
 cleanup: |-
-  # Notice: regex must start with /.
-  /regex_pattern
+  # The filename cleaning rules only support regular expressions, 
+  # so there is no need to start with '/'. 
+  # The matched strings will be replaced with an empty string.
+  regex_pattern1
+  regex_pattern2
 ```
