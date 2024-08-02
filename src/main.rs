@@ -3,55 +3,19 @@ use colored::*;
 use dirs_next as dirs;
 use fancy_regex::Regex;
 use md5::{Digest, Md5};
-use slab_tree::{NodeId, NodeRef, Tree, TreeBuilder};
 use std::collections::HashMap;
 use std::env;
-use std::fs::{read_link, remove_dir_all, remove_file, rename, File};
+use std::fs::{remove_dir_all, remove_file, rename, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
+mod data;
 mod fnmatch_regex;
+mod p2tree;
+mod tprint;
 
-const GLYPH_TREE_SPACE: &str = "    ";
-const GLYPH_TREE_BRANCH: &str = "│   ";
-const GLYPH_TEE: &str = "├── ";
-const GLYPH_LAST: &str = "└── ";
-
-const SYMBOL_ROOT: &str = "📂";
-const SYMBOL_DIR: &str = "📁";
-const SYMBOL_FILE: &str = "📄";
-const SYMBOL_LINK: &str = "🔗";
-const SYMBOL_BROKEN_ARROW: &str = "!>"; // ↛ ⥇ ⓧ ⊗ ⊘ ⤍ ⤑
-const SYMBOL_LINK_ARROW: &str = "->";
-const SYMBOL_DELETE: &str = "[-]"; // ␡
-const SYMBOL_RENAME: &str = "[*]"; //
-
-#[derive(Debug, PartialEq)]
-enum Operation {
-    None,
-    Delete,
-    Rename,
-}
-
-#[derive(Debug)]
-struct AppOptions {
-    enable_deletion: bool,
-    enable_hash_matching: bool,
-    enable_renaming: bool,
-    enable_prune_empty_dir: bool,
-    skip_parent_tmp: bool,
-    prune: bool,
-    verbose: u8,
-    config_file: PathBuf,
-    target_path: PathBuf,
-}
-
-impl AppOptions {
-    fn is_debug_mode(&self) -> bool {
-        self.verbose >= 3
-    }
-}
+use data::{AppOptions, Operation};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct PatternsConfig {
@@ -451,7 +415,10 @@ fn main() -> std::io::Result<()> {
 
     // dir tree
     if app_options.verbose >= 2 {
-        print_tree(path_list_to_tree(&operation_list, &app_options.target_path));
+        tprint::print_tree(p2tree::path_list_to_tree(
+            &operation_list,
+            &app_options.target_path,
+        ));
     }
 
     // Remove the entries that don't require operation.
@@ -467,7 +434,9 @@ fn main() -> std::io::Result<()> {
     });
     // execute
     if app_options.enable_deletion {
-        for (file_path, pattern, _) in operation_list.iter().filter(|(_, _, op)| *op == Operation::Delete)
+        for (file_path, pattern, _) in operation_list
+            .iter()
+            .filter(|(_, _, op)| *op == Operation::Delete)
         {
             if app_options.verbose > 0 {
                 println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
@@ -475,16 +444,16 @@ fn main() -> std::io::Result<()> {
                 println!("{} {:#?}", "[-]".red(), file_path);
             }
 
-            if app_options.prune {
-                if file_path.exists() {
-                    remove_path(file_path.clone())?;
-                }
+            if app_options.prune && file_path.exists() {
+                remove_path(file_path.clone())?;
             }
         }
     }
 
     if app_options.enable_renaming {
-        for (file_path, new_file_name, _) in operation_list.iter().filter(|(_, _, op)| *op == Operation::Rename)
+        for (file_path, new_file_name, _) in operation_list
+            .iter()
+            .filter(|(_, _, op)| *op == Operation::Rename)
         {
             println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
             let mut new_filepath = file_path.clone();
@@ -504,127 +473,4 @@ fn remove_path(path: PathBuf) -> std::io::Result<()> {
         Ok(()) => Ok(()),
         Err(_) => remove_dir_all(path),
     }
-}
-
-fn symbol_link_status(symbol_link_path: &Path) -> std::io::Result<(bool, PathBuf)> {
-    let target = read_link(symbol_link_path)?;
-    let target_path = symbol_link_path.parent().unwrap().join(&target);
-    Ok((target_path.exists(), target))
-}
-
-fn path_list_to_tree(
-    path_list: &Vec<(PathBuf, String, Operation)>,
-    root_path: &PathBuf,
-) -> Tree<String> {
-    let mut tree = TreeBuilder::new()
-        .with_root(format!("[root]{}", root_path.as_os_str().to_string_lossy()))
-        .build();
-    let mut path_node_id_map: HashMap<String, NodeId> = HashMap::new();
-    let root_id = tree.root_id().unwrap();
-    path_node_id_map.insert("".to_string(), root_id);
-
-    for (path, _pattern, _op) in path_list {
-        // 遍历路径的每个组件，并将每个组件添加为新的子节点
-        let mut current_node_id = root_id;
-
-        let mut parent_path = PathBuf::new();
-        for p in path.strip_prefix(root_path).unwrap().components() {
-            parent_path.push(p);
-            let parent_path_str = parent_path.as_os_str().to_string_lossy().into_owned();
-            // println!("{}", parent_path.display());
-            let component_str = p.as_os_str().to_string_lossy().into_owned();
-
-            // 检查这个组件是否已经存在
-            if let Some(node_id) = path_node_id_map.get(&parent_path_str) {
-                // 如果存在，则移动到下级节点
-                current_node_id = *node_id;
-            } else {
-                // 如果不存在，则添加新的节点
-                // println!("--> {:#?}", parent_path);
-                let full_path = root_path.join(&parent_path);
-                let (icon, name) = if full_path.is_symlink() {
-                    (
-                        SYMBOL_LINK,
-                        match symbol_link_status(&full_path) {
-                            Ok((is_valid, _target)) => {
-                                format!(
-                                    "{} {} {}",
-                                    component_str,
-                                    if is_valid {
-                                        SYMBOL_LINK_ARROW.normal()
-                                    } else {
-                                        SYMBOL_BROKEN_ARROW.magenta()
-                                    },
-                                    _target.display()
-                                )
-                            } // express result
-                            Err(_err) => "<read link ERROR>".to_string(), // express result
-                        },
-                    )
-                } else if full_path.is_file() {
-                    (SYMBOL_FILE, component_str)
-                } else if full_path.is_dir() {
-                    (SYMBOL_DIR, component_str + "/")
-                } else {
-                    ("??", component_str)
-                };
-
-                let mut parent = tree.get_mut(current_node_id).unwrap();
-                let new_node = parent.append(format!("{} {}", icon, name));
-                path_node_id_map.insert(parent_path_str, new_node.node_id());
-                current_node_id = new_node.node_id();
-            }
-        }
-        // println!("[DEBUG] {:#?}, {:#?}, {:#?}", parent_path, _pattern, _op);
-        let _node_id = path_node_id_map
-            .get(&parent_path.as_os_str().to_string_lossy().into_owned())
-            .unwrap();
-        let mut _node = tree.get_mut(*_node_id).unwrap();
-        match _op {
-            Operation::Delete => {
-                let node_data = _node.data();
-                *node_data = format!("{} {} <= {}", node_data, SYMBOL_DELETE.red(), _pattern);
-            }
-            Operation::Rename => {
-                let node_data = _node.data();
-                *node_data = format!("{} {} => {}", node_data, SYMBOL_RENAME.yellow(), _pattern);
-            }
-            _ => {}
-        }
-    }
-    tree // return tree
-}
-
-fn print_tree(tree: Tree<String>) {
-    let root_id = tree.root_id().unwrap();
-    let root = tree.get(root_id).unwrap();
-
-    // 递归地遍历树的每个节点
-    fn traverse(node: &NodeRef<String>, prefix: &str) {
-        let pointer = if node.parent().is_none() {
-            // 根节点
-            SYMBOL_ROOT
-        } else if node.next_sibling().is_none() {
-            // 最后一条
-            GLYPH_LAST
-        } else {
-            GLYPH_TEE
-        };
-        println!("{}{}{}", prefix, pointer, node.data());
-
-        let prefix = format!(
-            "{}{}",
-            prefix,
-            if node.next_sibling().is_none() {
-                GLYPH_TREE_SPACE
-            } else {
-                GLYPH_TREE_BRANCH
-            }
-        );
-        for child in node.children() {
-            traverse(&child, &prefix);
-        }
-    }
-
-    traverse(&root, "");
 }
