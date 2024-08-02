@@ -6,7 +6,7 @@ use clap::{arg, command, value_parser, ArgAction};
 use crate::data;
 use crate::util;
 
-pub fn parse() -> std::result::Result<data::AppOptions, std::io::Error> {
+pub fn parse() -> Result<data::AppOptions, std::io::Error> {
     let app = command!() // requires `cargo` feature
         .arg(arg!([path] "target path to clean up").value_parser(value_parser!(PathBuf)))
         .arg(

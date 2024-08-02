@@ -94,10 +94,11 @@ fn main() -> std::io::Result<()> {
     }
 
     // Remove the entries that don't require operation.
-    operation_list.retain(|(_, _, op)| match op {
-        data::Operation::None => false,
-        _ => true,
-    });
+    //operation_list.retain(|(_, _, op)| match op {
+    //    data::Operation::None => false,
+    //    _ => true,
+    //});
+    operation_list.retain(|(_, _, op)| !matches!(op, data::Operation::None));
     // Sort the operation list in depth-first order.
     operation_list.sort_by(|a, b| {
         let depth_a = a.0.components().count();
