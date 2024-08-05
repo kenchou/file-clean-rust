@@ -3,7 +3,7 @@ Clean up (rename/delete) folders and files according to configured rules.
 
 ## Motivation
 Resources downloaded through P2P networks usually contain a lot of junk files or padding files.  
-Some clients (such as xunlei) have automatic cleaning features, but aria2 lacks this functionality.  
+Some clients (such as xunlei) have automatic cleaning features, but `aria2` lacks this functionality.  
 Therefore, I wrote a tool to clean up directories and files.
 
 ## Usage
