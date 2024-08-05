@@ -1,0 +1,39 @@
+cargo run -- ~/work/test -vvv -c ".cleanup-patterns.yml"
+===
+AppOptions {
+    enable_deletion: true,
+    enable_hash_matching: true,
+    enable_renaming: true,
+    enable_prune_empty_dir: true,
+    skip_parent_tmp: true,
+    prune: true,
+    verbose: 3,
+    config_file: ".cleanup-patterns.yml",
+    target_path: "/home/fzx/work/test",
+}
+PatternMatcher {
+    patterns_to_remove: [],
+    patterns_to_remove_with_hash: [],
+    patterns_to_rename: [],
+}
+* operation_list: [
+    (
+        "/home/fzx/work/test",
+        "",
+        None,
+    ),
+    (
+        "/home/fzx/work/test/t1",
+        "",
+        None,
+    ),
+    (
+        "/home/fzx/work/test/t2.txt",
+        "",
+        None,
+    ),
+]
+📂[root]/home/fzx/work/test
+    ├── 📄 t1
+    └── 📄 t2.txt
+
