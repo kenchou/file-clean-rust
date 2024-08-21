@@ -12,10 +12,10 @@ dirs-next = "2.0.0"
 fancy-regex = "0.13.0"
 itertools = "0.13.0"
 md-5 = { version = "0.10.6", features = ["md5-asm"] }
+nary_tree = "0.4.3"
 quick-error = "2.0.1"
 serde = { version = "1.0.204", features = ["derive"] }
 serde_yaml = "0.9.34"
-slab_tree = "0.3.2"
 walkdir = "2.5.0"
 
 [profile.release]

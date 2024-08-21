@@ -2,7 +2,7 @@ use std::path::{Path,PathBuf};
 use std::collections::HashMap;
 use std::fs::read_link;
 
-use slab_tree::{NodeId,TreeBuilder,Tree};
+use nary_tree::{NodeId,TreeBuilder,Tree};
 use colored::*;
 
 use crate::data::Operation;

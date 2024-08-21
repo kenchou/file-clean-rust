@@ -1,4 +1,4 @@
-use slab_tree::{NodeRef, Tree};
+use nary_tree::{NodeRef, Tree};
 
 const GLYPH_TREE_SPACE: &str = "    ";
 const GLYPH_TREE_BRANCH: &str = "│   ";
