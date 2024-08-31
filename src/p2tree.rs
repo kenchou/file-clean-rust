@@ -1,9 +1,9 @@
-use std::path::{Path,PathBuf};
 use std::collections::HashMap;
 use std::fs::read_link;
+use std::path::{Path, PathBuf};
 
-use nary_tree::{NodeId,TreeBuilder,Tree};
 use colored::*;
+use nary_tree::{NodeId, Tree, TreeBuilder};
 
 use crate::data::Operation;
 
