@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use colored::*;
 use walkdir::WalkDir;
 
+mod cli;
 mod data;
 mod fnmatch_regex;
 mod p2tree;
-mod tprint;
-mod pmatcher;
 mod pconfig;
-mod cli;
+mod pmatcher;
+mod tprint;
 mod util;
 
 fn main() -> std::io::Result<()> {
@@ -62,7 +62,11 @@ fn main() -> std::io::Result<()> {
         if app_options.enable_renaming {
             let new_filename = pattern_matcher.clean_filename(filename);
             if new_filename != filename {
-                operation_list.push((filepath.to_path_buf(), new_filename, data::Operation::Rename));
+                operation_list.push((
+                    filepath.to_path_buf(),
+                    new_filename,
+                    data::Operation::Rename,
+                ));
                 continue;
             }
         }
@@ -78,7 +82,11 @@ fn main() -> std::io::Result<()> {
             ))
         }
 
-        operation_list.push((filepath.to_path_buf(), "".to_string(), data::Operation::None));
+        operation_list.push((
+            filepath.to_path_buf(),
+            "".to_string(),
+            data::Operation::None,
+        ));
     }
 
     if app_options.is_debug_mode() {
