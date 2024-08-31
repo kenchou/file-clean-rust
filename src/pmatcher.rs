@@ -1,13 +1,13 @@
-use std::path::{Path,PathBuf};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use fancy_regex::Regex;
 use md5::{Digest, Md5};
 
-use crate::pconfig;
 use crate::fnmatch_regex;
+use crate::pconfig;
 
 #[derive(Debug)]
 pub struct PatternMatcher {
@@ -79,14 +79,18 @@ impl PatternMatcher {
 fn create_patterns_with_hash(patterns: HashMap<String, Vec<String>>) -> Vec<(Regex, Vec<String>)> {
     patterns
         .into_iter()
-        .map(|(key, value)| {
-            // println!("hash --> {}", key);
-            (
-                Regex::new(fnmatch_regex::glob_to_regex_string(&key).as_str()).unwrap(),
-                value,
-            )
-        })
+        .map(|(key, value)| (parse_mixed_regex(&key), value))
         .collect()
+}
+
+fn parse_mixed_regex(pattern: &str) -> Regex {
+    let pattern = pattern.trim();
+    // println!(">>> {:#?}", pattern);
+    if let Some(stripped) = pattern.strip_prefix('/') {
+        Regex::new(stripped).unwrap()
+    } else {
+        Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
+    }
 }
 
 /**
@@ -95,15 +99,7 @@ fn create_patterns_with_hash(patterns: HashMap<String, Vec<String>>) -> Vec<(Reg
 fn create_mixed_regex_list(patterns: Vec<&str>) -> Vec<Regex> {
     patterns
         .iter()
-        .map(|pattern| {
-            let pattern = pattern.trim();
-            // println!(">>> {:#?}", pattern);
-            if let Some(stripped) = pattern.strip_prefix('/') {
-                Regex::new(stripped).unwrap()
-            } else {
-                Regex::new(fnmatch_regex::glob_to_regex_string(pattern).as_str()).unwrap()
-            }
-        })
+        .map(|pattern| parse_mixed_regex(pattern))
         .collect()
 }
 
