@@ -63,3 +63,7 @@ cleanup: |-
   regex_pattern1
   regex_pattern2
 ```
+
+## Related projects
+- [aria2](https://github.com/aria2/aria2)
+- [aria2rpc-oversee](https://github.com/kenchou/aria2rpc-oversee)
