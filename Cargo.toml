@@ -7,15 +7,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.5.13", features = ["cargo", "derive", "string"] }
-colored = "2.1.0"
+clap = { version = "4.5.38", features = ["cargo", "derive", "string"] }
+colored = "2.2.0"
 dirs-next = "2.0.0"
 fancy-regex = "0.13.0"
 itertools = "0.13.0"
 md-5 = { version = "0.10.6", features = ["md5-asm"] }
 nary_tree = "0.4.3"
 quick-error = "2.0.1"
-serde = { version = "1.0.204", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
 walkdir = "2.5.0"
 
