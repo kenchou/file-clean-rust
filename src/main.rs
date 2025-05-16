@@ -208,37 +208,12 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    // 构建最终的删除操作列表
-    let mut all_delete_operations: Vec<(PathBuf, String)> = file_info
-        .iter()
-        .filter(|(_, (_, op))| *op == data::Operation::Delete)
-        .map(|(path, (pattern, _))| (path.clone(), pattern.clone()))
-        .collect();
-
-    // 按深度优先排序删除操作
-    all_delete_operations.par_sort_by(|(path_a, _), (path_b, _)| {
-        let depth_a = path_a.components().count();
-        let depth_b = path_b.components().count();
-        depth_b.cmp(&depth_a)
-    });
-
     // 执行删除操作
     if app_options.enable_deletion {
-        // 按深度分组
-        let mut grouped_by_depth: HashMap<usize, Vec<(PathBuf, String)>> = HashMap::new();
-        for (path, pattern) in all_delete_operations {
-            let depth = path.components().count();
-            grouped_by_depth.entry(depth).or_default().push((path, pattern));
-        }
-
-        // 从最深层开始，逐层处理
-        let mut depths: Vec<_> = grouped_by_depth.keys().collect();
-        depths.sort_by(|a, b| b.cmp(a)); // 降序排列
-
-        for depth in depths {
-            let operations = &grouped_by_depth[depth];
-            // 同一深度的可以并行处理
-            operations.par_iter().for_each(|(file_path, pattern)| {
+        file_info
+            .iter()
+            .filter(|(_, (_, op))| *op == data::Operation::Delete)
+            .for_each(|(file_path, (pattern, _))| {
                 // 删除操作代码...
                 if app_options.verbose > 0 {
                     println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
@@ -250,11 +225,12 @@ fn main() -> std::io::Result<()> {
                     match util::remove_path(file_path.clone()) {
                         Ok(_) => (),
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                        Err(e) => eprintln!("{} 删除文件失败 {:?}: {}", "[错误]".red(), file_path, e),
+                        Err(e) => {
+                            eprintln!("{} 删除文件失败 {:?}: {}", "[错误]".red(), file_path, e)
+                        }
                     }
                 }
             });
-        }
     }
 
     // 执行重命名操作
