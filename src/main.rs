@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
@@ -30,7 +31,19 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", pattern_matcher);
     }
 
+    println!("正在扫描文件...");
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")
+            .unwrap()
+    );
+    spinner.set_message("scanning files...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
     // 仅扫描一次文件系统，收集所有路径
+    let mut file_count = 0;
     let entries: Vec<_> = WalkDir::new(&app_options.target_path)
         .sort_by(|a, b| {
             let depth_a = a.depth();
@@ -47,17 +60,44 @@ fn main() -> std::io::Result<()> {
         })
         .into_iter()
         .filter_entry(|e| !app_options.skip_parent_tmp || util::is_not_hidden(e))
-        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            if let Ok(_) = &e {
+                file_count += 1;
+                if file_count % 1000 == 0 {
+                    spinner.set_message(format!("已扫描 {} 个文件...", file_count));
+                }
+            }
+            e.ok()
+        })
         .collect();
+    spinner.finish_with_message(format!("扫描完成，共 {} 个文件", file_count));
 
     // 并行处理文件信息
     let options_ref = &app_options;
     let matcher_ref = &pattern_matcher;
 
+    println!("正在处理文件...");
+    let process_bar = ProgressBar::new(entries.len() as u64);
+    process_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("█▓▒░ ")
+    );
+
     let file_info_results: Vec<_> = entries
         .par_iter()
         .filter_map(|entry| {
             let filepath = entry.path();
+            // 更新进度条
+            process_bar.inc(1);
+            // 显示当前处理的文件名
+            if let Some(name) = filepath.file_name().and_then(|n| n.to_str()) {
+                if process_bar.position() % 100 == 0 {
+                    process_bar.set_message(format!("处理: {}", name));
+                }
+            }
+
             // 处理无效文件名：输出警告并跳过
             let filename = match entry.file_name().to_str() {
                 Some(name) => name,
@@ -74,6 +114,7 @@ fn main() -> std::io::Result<()> {
                     let p = pattern.unwrap();
                     return Some((filepath.to_path_buf(), (p, data::Operation::Delete)));
                 } else if options_ref.enable_hash_matching {
+                    process_bar.set_message(format!("计算MD5: {}", filename));
                     (matched, pattern) = matcher_ref.match_remove_hash(filepath.to_str().unwrap());
                     if matched {
                         let p = pattern.unwrap();
@@ -114,6 +155,8 @@ fn main() -> std::io::Result<()> {
             ))
         })
         .collect();
+    // 完成进度条
+    process_bar.finish_with_message("文件处理完成");
 
     // 构建文件信息映射
     let mut file_info: HashMap<PathBuf, (String, data::Operation)> = HashMap::new();
