@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use fancy_regex::Regex;
@@ -44,19 +44,15 @@ impl PatternMatcher {
         let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
             if re.is_match(filename).unwrap() {
-                let mut file = File::open(test_file).unwrap();
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer).unwrap();
-                let mut hash_calculator = Md5::new();
-                hash_calculator.update(&buffer);
-
-                let hash = format!("{:x}", hash_calculator.finalize());
-                if hash_list.contains(&hash) {
-                    return (true, Some(format!("{}:{}", re, hash)));
+                // 处理 Result 类型
+                if let Ok(hash) = calculate_md5(test_file) {
+                    if hash_list.contains(&hash) {
+                        return (true, Some(format!("{}:{}", re, hash)));
+                    }
                 }
             }
         }
-        (false, None) // return
+        (false, None)
     }
 
     pub fn clean_filename(&self, filename: &str) -> String {
@@ -74,6 +70,23 @@ impl PatternMatcher {
         let new_filename = full_path.to_str().unwrap().to_string();
         new_filename // return new_filename
     }
+}
+
+fn calculate_md5(filepath: &str) -> io::Result<String> {
+    let file = File::open(filepath)?;
+    let mut reader = BufReader::with_capacity(1024 * 1024, file);
+    let mut buffer = [0; 4096];
+    let mut hasher = Md5::new();
+
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn create_patterns_with_hash(patterns: HashMap<String, Vec<String>>) -> Vec<(Regex, Vec<String>)> {
