@@ -4,6 +4,7 @@ use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use fancy_regex::Regex;
+use indicatif::ProgressBar;
 use md5::{Digest, Md5};
 
 use crate::fnmatch_regex;
@@ -40,11 +41,31 @@ impl PatternMatcher {
         (false, None) // return
     }
 
+    #[allow(dead_code)]
     pub fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
         let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
             if re.is_match(filename).unwrap() {
                 // 处理 Result 类型
+                if let Ok(hash) = calculate_md5(test_file) {
+                    if hash_list.contains(&hash) {
+                        return (true, Some(format!("{}:{}", re, hash)));
+                    }
+                }
+            }
+        }
+        (false, None)
+    }
+
+    #[allow(dead_code)]
+    pub fn match_remove_hash_with_progress(&self, test_file: &str, progress: Option<&ProgressBar>) -> (bool, Option<String>) {
+        let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
+        for (re, hash_list) in &self.patterns_to_remove_with_hash {
+            if re.is_match(filename).unwrap() {
+                if let Some(pb) = progress {
+                    pb.set_message(format!("计算MD5: {}", filename));
+                }
+
                 if let Ok(hash) = calculate_md5(test_file) {
                     if hash_list.contains(&hash) {
                         return (true, Some(format!("{}:{}", re, hash)));

@@ -114,8 +114,7 @@ fn main() -> std::io::Result<()> {
                     let p = pattern.unwrap();
                     return Some((filepath.to_path_buf(), (p, data::Operation::Delete)));
                 } else if options_ref.enable_hash_matching {
-                    process_bar.set_message(format!("计算MD5: {}", filename));
-                    (matched, pattern) = matcher_ref.match_remove_hash(filepath.to_str().unwrap());
+                    (matched, pattern) = matcher_ref.match_remove_hash_with_progress(filepath.to_str().unwrap(), Some(&process_bar));
                     if matched {
                         let p = pattern.unwrap();
                         return Some((filepath.to_path_buf(), (p, data::Operation::Delete)));
@@ -155,8 +154,6 @@ fn main() -> std::io::Result<()> {
             ))
         })
         .collect();
-    // 完成进度条
-    process_bar.finish_with_message("文件处理完成");
 
     // 构建文件信息映射
     let mut file_info: HashMap<PathBuf, (String, data::Operation)> = HashMap::new();
@@ -250,6 +247,8 @@ fn main() -> std::io::Result<()> {
             }
         }
     }
+    // 完成进度条
+    process_bar.finish_with_message("文件处理完成");
 
     // 执行删除操作
     if app_options.enable_deletion {
