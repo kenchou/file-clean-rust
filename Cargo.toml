@@ -15,6 +15,7 @@ itertools = "0.13.0"
 md-5 = { version = "0.10.6", features = ["md5-asm"] }
 nary_tree = "0.4.3"
 quick-error = "2.0.1"
+rayon = "1.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
 walkdir = "2.5.0"

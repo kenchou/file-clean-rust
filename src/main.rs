@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::rename;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use colored::*;
+use rayon::prelude::*;
 use walkdir::WalkDir;
 
 mod cli;
@@ -21,79 +23,82 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", app_options);
     }
 
-    let pattern_matcher = pmatcher::PatternMatcher::from_config_file(&app_options.config_file);
+    let pattern_matcher = Arc::new(pmatcher::PatternMatcher::from_config_file(&app_options.config_file));
     if app_options.is_debug_mode() {
         println!("{:#?}", pattern_matcher);
     }
 
-    // 仅扫描一次文件系统，收集所有信息
-    let mut file_info: HashMap<PathBuf, (String, data::Operation)> = HashMap::new();
-    let mut all_paths: Vec<PathBuf> = Vec::new();
-
-    // 第一次扫描文件系统，收集所有文件和目录信息
-    for entry in WalkDir::new(&app_options.target_path)
+    // 仅扫描一次文件系统，收集所有路径
+    let entries: Vec<_> = WalkDir::new(&app_options.target_path)
         .sort_by(|a, b| {
-            // 深度优先排序，从深到浅（先处理最深层级）
             let depth_a = a.depth();
             let depth_b = b.depth();
             depth_b.cmp(&depth_a)
-                // 若深度相同，目录排在文件前面
                 .then(a.file_type().is_dir().cmp(&b.file_type().is_dir()).reverse())
-                // 若都是目录或都是文件，按名称排序
                 .then(a.file_name().cmp(b.file_name()))
         })
         .into_iter()
         .filter_entry(|e| !app_options.skip_parent_tmp || util::is_not_hidden(e))
         .filter_map(|e| e.ok())
-    {
-        let filepath = entry.path();
-        let filename = entry.file_name().to_str().unwrap();
-        all_paths.push(filepath.to_path_buf());
+        .collect();
 
-        // 检查是否需要删除
-        if app_options.enable_deletion {
-            let (mut matched, mut pattern) = pattern_matcher.match_remove_pattern(filename);
-            if matched {
-                let p = pattern.unwrap();
-                file_info.insert(filepath.to_path_buf(), (p, data::Operation::Delete));
-                continue;
-            } else if app_options.enable_hash_matching {
-                // 只在必要时计算哈希
-                (matched, pattern) = pattern_matcher.match_remove_hash(filepath.to_str().unwrap());
+    // 并行处理文件信息
+    let options_ref = &app_options;
+    let matcher_ref = &pattern_matcher;
+
+    let file_info_results: Vec<_> = entries.par_iter()
+        .map(|entry| {
+            let filepath = entry.path();
+            let filename = entry.file_name().to_str().unwrap();
+
+            // 检查是否需要删除
+            if options_ref.enable_deletion {
+                let (mut matched, mut pattern) = matcher_ref.match_remove_pattern(filename);
                 if matched {
                     let p = pattern.unwrap();
-                    file_info.insert(filepath.to_path_buf(), (p, data::Operation::Delete));
-                    continue;
+                    return (filepath.to_path_buf(), (p, data::Operation::Delete));
+                } else if options_ref.enable_hash_matching {
+                    (matched, pattern) = matcher_ref.match_remove_hash(filepath.to_str().unwrap());
+                    if matched {
+                        let p = pattern.unwrap();
+                        return (filepath.to_path_buf(), (p, data::Operation::Delete));
+                    }
                 }
             }
-        }
 
-        // 检查是否需要重命名
-        if app_options.enable_renaming {
-            let new_filename = pattern_matcher.clean_filename(filename);
-            if new_filename != filename {
-                file_info.insert(filepath.to_path_buf(), (new_filename, data::Operation::Rename));
-                continue;
+            // 检查是否需要重命名
+            if options_ref.enable_renaming {
+                let new_filename = matcher_ref.clean_filename(filename);
+                if new_filename != filename {
+                    return (filepath.to_path_buf(), (new_filename, data::Operation::Rename));
+                }
             }
-        }
 
-        // 检查是否为空目录
-        if app_options.enable_prune_empty_dir
-            && filepath.is_dir()
-            && filepath.read_dir()?.next().is_none()
-        {
-            file_info.insert(filepath.to_path_buf(), ("<EMPTY_DIR>".to_string(), data::Operation::Delete));
-            continue;
-        }
+            // 检查是否为空目录
+            if options_ref.enable_prune_empty_dir && filepath.is_dir() {
+                if filepath.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+                    return (filepath.to_path_buf(), ("<EMPTY_DIR>".to_string(), data::Operation::Delete));
+                }
+            }
 
-        // 不需要操作的文件
-        file_info.insert(filepath.to_path_buf(), ("".to_string(), data::Operation::None));
+            // 不需要操作的文件
+            (filepath.to_path_buf(), ("".to_string(), data::Operation::None))
+        })
+        .collect();
+
+    // 构建文件信息映射
+    let mut file_info: HashMap<PathBuf, (String, data::Operation)> = HashMap::new();
+    let mut all_paths: Vec<PathBuf> = Vec::with_capacity(file_info_results.len());
+
+    for (path, info) in file_info_results {
+        all_paths.push(path.clone());
+        file_info.insert(path, info);
     }
 
-    // 将 HashMap 转换为 Vec 用于打印目录树
+    // 构建操作列表
     let operation_list: Vec<(PathBuf, String, data::Operation)> = file_info
         .iter()
-        .map(|(path, (pattern, op))| (path.clone(), pattern.clone(), (*op).clone()))
+        .map(|(path, (pattern, op))| (path.clone(), pattern.clone(), op.clone()))
         .collect();
 
     if app_options.is_debug_mode() {
@@ -108,56 +113,66 @@ fn main() -> std::io::Result<()> {
         ));
     }
 
-    // 处理递归的空目录删除
+    // 处理递归的空目录删除 - 优化算法
     if app_options.enable_deletion && app_options.enable_prune_empty_dir {
-        // 创建待删除路径集合
         let mut to_delete: HashSet<PathBuf> = file_info
             .iter()
             .filter(|(_, (_, op))| *op == data::Operation::Delete)
             .map(|(path, _)| path.clone())
             .collect();
 
-        // 剩余路径集合
-        let mut remaining_paths: HashSet<PathBuf> = all_paths
-            .iter()
-            .filter(|path| !to_delete.contains(*path))
-            .cloned()
-            .collect();
+        // 构建目录树结构
+        let mut dir_children: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
-        // 递归查找和标记空目录
-        let mut found_empty_dirs = true;
-        while found_empty_dirs {
-            found_empty_dirs = false;
-            let mut new_empty_dirs = Vec::new();
+        for path in all_paths.iter() {
+            if path.is_dir() {
+                dir_children.insert(path.clone(), Vec::new());
+            }
 
-            // 遍历所有剩余路径，查找空目录
-            for path in remaining_paths.iter() {
-                if path.is_dir() {
-                    let mut is_empty = true;
-                    for child in remaining_paths.iter() {
-                        if child != path && child.starts_with(path) {
-                            is_empty = false;
-                            break;
-                        }
-                    }
+            // 找到父目录并添加为子项
+            if let Some(parent) = path.parent().map(|p| p.to_path_buf()) {
+                if all_paths.contains(&parent) && !to_delete.contains(path) {
+                    dir_children.entry(parent).or_insert_with(Vec::new).push(path.clone());
+                }
+            }
+        }
 
-                    if is_empty {
-                        new_empty_dirs.push(path.clone());
-                        found_empty_dirs = true;
+        // 查找空目录 - 从不包含其他目录的目录开始
+        let mut empty_dirs = Vec::new();
+        let mut changed = true;
+
+        while changed {
+            changed = false;
+
+            for (dir, children) in &dir_children {
+                if !to_delete.contains(dir) && children.is_empty() {
+                    empty_dirs.push(dir.clone());
+                    changed = true;
+                }
+            }
+
+            // 将空目录标记为删除
+            for dir in &empty_dirs {
+                file_info.insert(dir.clone(), ("<EMPTY_DIR>".to_string(), data::Operation::Delete));
+                to_delete.insert(dir.clone());
+
+                // 从父目录的子列表中移除
+                if let Some(parent) = dir.parent().map(|p| p.to_path_buf()) {
+                    if let Some(siblings) = dir_children.get_mut(&parent) {
+                        siblings.retain(|p| p != dir);
                     }
                 }
             }
 
-            // 更新删除列表和剩余列表
-            for empty_dir in &new_empty_dirs {
-                file_info.insert(empty_dir.clone(), ("<EMPTY_DIR>".to_string(), data::Operation::Delete));
-                to_delete.insert(empty_dir.clone());
-                remaining_paths.remove(empty_dir);
+            if !empty_dirs.is_empty() {
+                empty_dirs.clear();
+            } else {
+                break;
             }
         }
     }
 
-    // 构建最终的删除和重命名操作列表
+    // 构建最终的删除操作列表
     let mut all_delete_operations: Vec<(PathBuf, String)> = file_info
         .iter()
         .filter(|(_, (_, op))| *op == data::Operation::Delete)
@@ -165,7 +180,7 @@ fn main() -> std::io::Result<()> {
         .collect();
 
     // 按深度优先排序删除操作
-    all_delete_operations.sort_by(|(path_a, _), (path_b, _)| {
+    all_delete_operations.par_sort_by(|(path_a, _), (path_b, _)| {
         let depth_a = path_a.components().count();
         let depth_b = path_b.components().count();
         depth_b.cmp(&depth_a)
