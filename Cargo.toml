@@ -11,6 +11,7 @@ clap = { version = "4.5.38", features = ["cargo", "derive", "string"] }
 colored = "2.2.0"
 dirs-next = "2.0.0"
 fancy-regex = "0.13.0"
+indicatif = "0.17.11"
 itertools = "0.13.0"
 md-5 = { version = "0.10.6", features = ["md5-asm"] }
 nary_tree = "0.4.3"

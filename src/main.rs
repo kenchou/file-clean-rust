@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
@@ -30,7 +31,19 @@ fn main() -> std::io::Result<()> {
         println!("{:#?}", pattern_matcher);
     }
 
+    println!("正在扫描文件...");
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    spinner.set_message("scanning files...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
     // 仅扫描一次文件系统，收集所有路径
+    let mut file_count = 0;
     let entries: Vec<_> = WalkDir::new(&app_options.target_path)
         .sort_by(|a, b| {
             let depth_a = a.depth();
@@ -47,17 +60,46 @@ fn main() -> std::io::Result<()> {
         })
         .into_iter()
         .filter_entry(|e| !app_options.skip_parent_tmp || util::is_not_hidden(e))
-        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            if let Ok(_) = &e {
+                file_count += 1;
+                if file_count % 1000 == 0 {
+                    spinner.set_message(format!("已扫描 {} 个文件...", file_count));
+                }
+            }
+            e.ok()
+        })
         .collect();
+    spinner.finish_with_message(format!("扫描完成，共 {} 个文件", file_count));
 
     // 并行处理文件信息
     let options_ref = &app_options;
     let matcher_ref = &pattern_matcher;
 
+    println!("正在处理文件...");
+    let process_bar = ProgressBar::new(entries.len() as u64);
+    process_bar.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}\n{msg}",
+            )
+            .unwrap()
+            .progress_chars("█▓▒░ "),
+    );
+
     let file_info_results: Vec<_> = entries
         .par_iter()
         .filter_map(|entry| {
             let filepath = entry.path();
+            // 更新进度条
+            process_bar.inc(1);
+            // 显示当前处理的文件名
+            if let Some(name) = filepath.file_name().and_then(|n| n.to_str()) {
+                if process_bar.position() % 100 == 0 {
+                    process_bar.set_message(format!("处理: {}", name));
+                }
+            }
+
             // 处理无效文件名：输出警告并跳过
             let filename = match entry.file_name().to_str() {
                 Some(name) => name,
@@ -142,71 +184,90 @@ fn main() -> std::io::Result<()> {
         ));
     }
 
-    // 处理递归的空目录删除 - 优化算法
+    // 处理递归的空目录删除 - 优化版本
     if app_options.enable_deletion && app_options.enable_prune_empty_dir {
-        let mut to_delete: HashSet<PathBuf> = file_info
-            .iter()
-            .filter(|(_, (_, op))| *op == data::Operation::Delete)
-            .map(|(path, _)| path.clone())
-            .collect();
+        process_bar.set_message("空目录检测中...".to_string());
 
-        // 构建目录树结构
-        let mut dir_children: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        // 第一阶段：收集需要删除的目录
+        let dirs_to_mark_delete = {
+            // 创建局部作用域，确保借用在此结束
+            let paths_set: HashSet<&PathBuf> = all_paths.iter().collect();
+            let mut to_delete: HashSet<&PathBuf> = file_info
+                .iter()
+                .filter(|(_, (_, op))| *op == data::Operation::Delete)
+                .map(|(path, _)| path)
+                .collect();
 
-        for path in all_paths.iter() {
-            if path.is_dir() {
-                dir_children.insert(path.clone(), Vec::new());
+            // 目录子项映射
+            let mut dir_children: HashMap<&PathBuf, Vec<&PathBuf>> = HashMap::new();
+
+            let dirs: Vec<&PathBuf> = all_paths.iter()
+                .filter(|p| p.is_dir())
+                .collect();
+
+            // 初始化目录映射
+            for &dir in &dirs {
+                dir_children.insert(dir, Vec::new());
             }
 
-            // 找到父目录并添加为子项
-            if let Some(parent) = path.parent().map(|p| p.to_path_buf()) {
-                if all_paths.contains(&parent) && !to_delete.contains(path) {
-                    dir_children
-                        .entry(parent)
-                        .or_insert_with(Vec::new)
-                        .push(path.clone());
-                }
-            }
-        }
-
-        // 查找空目录 - 从不包含其他目录的目录开始
-        // 使用 capacity 预分配容器大小
-        let mut empty_dirs = Vec::with_capacity(dir_children.len() / 2);
-        let mut changed = true;
-
-        while changed {
-            changed = false;
-
-            for (dir, children) in &dir_children {
-                if !to_delete.contains(dir) && children.is_empty() {
-                    empty_dirs.push(dir.clone());
-                    changed = true;
-                }
-            }
-
-            // 将空目录标记为删除
-            for dir in &empty_dirs {
-                file_info.insert(
-                    dir.clone(),
-                    ("<EMPTY_DIR>".to_string(), data::Operation::Delete),
-                );
-                to_delete.insert(dir.clone());
-
-                // 从父目录的子列表中移除
-                if let Some(parent) = dir.parent().map(|p| p.to_path_buf()) {
-                    if let Some(siblings) = dir_children.get_mut(&parent) {
-                        siblings.retain(|p| p != dir);
+            // 构建父子关系
+            for path in all_paths.iter() {
+                if let Some(parent) = path.parent().map(PathBuf::from) {
+                    if let Some(actual_parent) = paths_set.get(&parent) {
+                        if !to_delete.contains(path) {
+                            dir_children.entry(actual_parent).or_default().push(path);
+                        }
                     }
                 }
             }
 
-            if !empty_dirs.is_empty() {
+            // 识别所有空目录
+            let mut empty_dirs_result = Vec::new();
+            let mut empty_dirs = Vec::with_capacity(dirs.len() / 2);
+
+            for _ in 0..dirs.len() {
                 empty_dirs.clear();
-            } else {
-                break;
+
+                for &dir in dirs.iter() {
+                    if !to_delete.contains(&dir) &&
+                        dir_children.get(dir).map_or(true, |c| c.is_empty()) {
+                        empty_dirs.push(dir);
+                    }
+                }
+
+                if empty_dirs.is_empty() {
+                    break;
+                }
+
+                for &dir in &empty_dirs {
+                    empty_dirs_result.push(dir.clone());
+                    to_delete.insert(dir);
+
+                    // 更新父目录的子列表
+                    if let Some(parent_buf) = dir.parent().map(PathBuf::from) {
+                        if let Some(parent) = paths_set.get(&parent_buf) {
+                            if let Some(children) = dir_children.get_mut(parent) {
+                                children.retain(|&p| p != dir);
+                            }
+                        }
+                    }
+                }
             }
+
+            empty_dirs_result
+        }; // to_delete 的生命周期在这里结束
+
+        // 第二阶段：更新 file_info
+        for dir in dirs_to_mark_delete {
+            file_info.insert(
+                dir,
+                ("<EMPTY_DIR>".to_string(), data::Operation::Delete),
+            );
         }
     }
+
+    // 完成进度条
+    process_bar.finish_with_message("文件处理完成");
 
     // 执行删除操作
     if app_options.enable_deletion {
