@@ -43,9 +43,19 @@ impl PatternMatcher {
 
     #[allow(dead_code)]
     pub fn match_remove_hash(&self, test_file: &str) -> (bool, Option<String>) {
-        let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
+        let filepath = Path::new(test_file);
+        let filename = match filepath.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => return (false, None), // 避免无效文件名
+        };
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
             if re.is_match(filename).unwrap() {
+                // 跳过大文件检查
+                if let Ok(metadata) = std::fs::metadata(filepath) {
+                    if metadata.len() > 100 * 1024 * 1024 {
+                        return (false, None);
+                    }
+                }
                 // 处理 Result 类型
                 if let Ok(hash) = calculate_md5(test_file) {
                     if hash_list.contains(&hash) {
@@ -58,12 +68,42 @@ impl PatternMatcher {
     }
 
     #[allow(dead_code)]
-    pub fn match_remove_hash_with_progress(&self, test_file: &str, progress: Option<&ProgressBar>) -> (bool, Option<String>) {
-        let filename = Path::new(test_file).file_name().unwrap().to_str().unwrap();
+    pub fn match_remove_hash_with_progress(
+        &self,
+        test_file: &str,
+        progress: Option<&ProgressBar>,
+    ) -> (bool, Option<String>) {
+        let filepath = Path::new(test_file);
+        let filename = match filepath.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => return (false, None), // 避免无效文件名
+        };
+
+        // 避免频繁更新和过长消息
+        let mut last_update = std::time::Instant::now();
+
         for (re, hash_list) in &self.patterns_to_remove_with_hash {
             if re.is_match(filename).unwrap() {
+                // 跳过大文件检查
+                if let Ok(metadata) = std::fs::metadata(filepath) {
+                    if metadata.len() > 100 * 1024 * 1024 {
+                        return (false, None);
+                    }
+                }
+
+                // 限制频率更新消息，避免栈溢出
                 if let Some(pb) = progress {
-                    pb.set_message(format!("计算MD5: {}", filename));
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_update).as_millis() > 100 {
+                        // 截断文件名以避免过长
+                        let short_name = if filename.len() > 50 {
+                            format!("{}...", &filename[0..47])
+                        } else {
+                            filename.to_string()
+                        };
+                        pb.set_message(format!("计算MD5: {}", short_name));
+                        last_update = now;
+                    }
                 }
 
                 if let Ok(hash) = calculate_md5(test_file) {
@@ -95,8 +135,10 @@ impl PatternMatcher {
 
 fn calculate_md5(filepath: &str) -> io::Result<String> {
     let file = File::open(filepath)?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file);
-    let mut buffer = [0; 4096];
+    let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
+
+    // 使用堆分配的 Vec 代替栈上的大数组
+    let mut buffer = vec![0; 64 * 1024]; // 64KB 缓冲区，在堆上分配
     let mut hasher = Md5::new();
 
     loop {
