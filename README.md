@@ -38,6 +38,48 @@ example:
 `file-clean-rust ~/Downloads` dry-run and see result  
 `file-clean-rust ~/Downloads --prune` prune the target path and see result
 
+## File Cleanup Configuration
+
+The default configuration file `.cleanup-patterns.yml` is searched for starting from the specified target path,  
+moving upwards step by step until the root directory is reached.  
+If it is not found, it will then be looked for in the user's home directory.
+
+```yaml
+remove: |-
+  # Any line that starts with '#' is treated as a comment. # 任何以井号 '#' 开头的行都做为注释
+  # Match the filename exactly. # 匹配精确的文件名
+  example_filename.ext
+  # '*' and '?' are wildcards.  # 可以使用通配符
+  wildcard*
+  # For more complex matching, use regular expressions. # 更复杂的匹配规则可以使用正则表达式
+  # Notice: regex must start with "/".                  # 注意：正则表达式必需以斜杠 '/' 开头. (区别于通配符规则)
+  /regex_pattern1
+  /regex_pattern2
+remove_hash:
+  # Sometimes, files may have the same content but different names. # 有时候一些文件具有相同的内容，但是会有不同的名字；
+  # Or they may have very common names (e.g., 01.jpg).              # 或者具有很常用的名字（比如 01.jpg），
+  # You can use hash matching to delete them.                       # 可以使用哈希匹配来删除。
+  # To improve efficiency, this method first matches the file names # 为了提升效率，此方法先匹配文件名，
+  # and then calculates the hash values.                            # 再计算哈希值。
+  # Only if both match will the file be deleted.                    # 二者都匹配才会删除。
+  # The file name rules are the same as the `remove` rules          # 文件名规则同 `remove` 规则，
+  # and support wildcards and regular expressions.                  # 支持通配符和正则表达式。
+  # Note: It is not recommended to use wildcards like *.jpg,        # 注：不建议使用 *.jpg 这样的通配符，
+  # as this may result in too many files needing hash calculation.  #    可能导致需要计算 hash 的文件过多。
+  "filename_or_wildcard":
+    - md5hash1
+    - md5hash2
+  "/file1|file2":
+    - md5hash1
+    - md5hash2
+cleanup: |-
+  # The filename cleaning rules only support regular expressions, # 文件名清理（改名）只支持正则表达式 
+  # so there is no need to start with '/'.                        # 所以不需要使用斜杠 '/' 开头 
+  # The matched strings will be replaced with an empty string.    # 匹配的内容会被替换成空串
+  regex_pattern1
+  regex_pattern2
+```
+
 ## Directory Monitoring
 
 The `monitor-dir.sh` script provides real-time monitoring of directories for newly moved folders.  
@@ -115,48 +157,6 @@ local stable_time=3   # Stability time (seconds)
 开始处理目录: /data/Downloads/TV/MyShow.S01.2025/Episode.01.1080p.WEB-DL
 正在扫描文件...
 [... file-clean-rust output ...]
-```
-
-## File Cleanup Configuration
-
-The default configuration file `.cleanup-patterns.yml` is searched for starting from the specified target path,  
-moving upwards step by step until the root directory is reached.  
-If it is not found, it will then be looked for in the user's home directory.
-
-```yaml
-remove: |-
-  # Any line that starts with '#' is treated as a comment. # 任何以井号 '#' 开头的行都做为注释
-  # Match the filename exactly. # 匹配精确的文件名
-  example_filename.ext
-  # '*' and '?' are wildcards.  # 可以使用通配符
-  wildcard*
-  # For more complex matching, use regular expressions. # 更复杂的匹配规则可以使用正则表达式
-  # Notice: regex must start with "/".                  # 注意：正则表达式必需以斜杠 '/' 开头. (区别于通配符规则)
-  /regex_pattern1
-  /regex_pattern2
-remove_hash:
-  # Sometimes, files may have the same content but different names. # 有时候一些文件具有相同的内容，但是会有不同的名字；
-  # Or they may have very common names (e.g., 01.jpg).              # 或者具有很常用的名字（比如 01.jpg），
-  # You can use hash matching to delete them.                       # 可以使用哈希匹配来删除。
-  # To improve efficiency, this method first matches the file names # 为了提升效率，此方法先匹配文件名，
-  # and then calculates the hash values.                            # 再计算哈希值。
-  # Only if both match will the file be deleted.                    # 二者都匹配才会删除。
-  # The file name rules are the same as the `remove` rules          # 文件名规则同 `remove` 规则，
-  # and support wildcards and regular expressions.                  # 支持通配符和正则表达式。
-  # Note: It is not recommended to use wildcards like *.jpg,        # 注：不建议使用 *.jpg 这样的通配符，
-  # as this may result in too many files needing hash calculation.  #    可能导致需要计算 hash 的文件过多。
-  "filename_or_wildcard":
-    - md5hash1
-    - md5hash2
-  "/file1|file2":
-    - md5hash1
-    - md5hash2
-cleanup: |-
-  # The filename cleaning rules only support regular expressions, # 文件名清理（改名）只支持正则表达式 
-  # so there is no need to start with '/'.                        # 所以不需要使用斜杠 '/' 开头 
-  # The matched strings will be replaced with an empty string.    # 匹配的内容会被替换成空串
-  regex_pattern1
-  regex_pattern2
 ```
 
 ## Related projects
