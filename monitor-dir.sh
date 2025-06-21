@@ -97,25 +97,29 @@ echo "使用文件监控工具: $watcher"
 
 if [ "$watcher" = "inotifywait" ]; then
     # Linux/Unix 系统使用 inotifywait
-    inotifywait --exclude '(.tmp)' -r -m --format '%w %f %e' -e moved_to "$@" | while IFS= read -r line; do
+    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to "$@" | while IFS= read -r line; do
         echo "原始事件: $line"
         # 检查是否包含 ISDIR
         if [[ "$line" == *"ISDIR"* ]]; then
-            read dir file action <<< "$line"
-            target_path="${dir}/${file}"
-            echo "The directory '$file' appeared in directory '$dir' via '$action'"
+            # 使用更安全的方式解析路径和事件
+            # 找到最后一个空格的位置，分离路径和事件
+            event_part="${line##* }"
+            path_part="${line% *}"
+            
+            echo "检测到目录移动事件: $path_part"
+            echo "事件类型: $event_part"
 
             # 等待目录稳定后再处理
-            wait_for_directory_stable "$target_path"
+            wait_for_directory_stable "$path_part"
 
             # 处理目录
-            echo "开始处理目录: $target_path"
-            ${BIN_PATH}/file-clean-rust --prune "$target_path"
+            echo "开始处理目录: $path_part"
+            "${BIN_PATH}/file-clean-rust" --prune "$path_part"
         fi
     done
 elif [ "$watcher" = "fswatch" ]; then
     # macOS 系统使用 fswatch
-    fswatch -r "$@" | while read -r changed_path; do
+    fswatch -r "$@" | while IFS= read -r changed_path; do
         echo "检测到变化: $changed_path"
 
         # 检查是否是新创建的目录
@@ -129,7 +133,7 @@ elif [ "$watcher" = "fswatch" ]; then
 
                 # 处理目录
                 echo "开始处理目录: $changed_path"
-                ${BIN_PATH}/file-clean-rust --prune "$changed_path"
+                "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
             fi
         fi
     done
