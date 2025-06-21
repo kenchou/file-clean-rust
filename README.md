@@ -1,7 +1,9 @@
 # file-clean-rust
+
 Clean up (rename/delete) folders and files according to configured rules.
 
 ## Motivation
+
 Resources downloaded through P2P networks usually contain a lot of junk files or padding files.  
 Some clients (such as xunlei) have automatic cleaning features, but `aria2` lacks this functionality.  
 Therefore, I wrote a tool to clean up directories and files.
@@ -36,7 +38,86 @@ example:
 `file-clean-rust ~/Downloads` dry-run and see result  
 `file-clean-rust ~/Downloads --prune` prune the target path and see result
 
-## Configuration
+## Directory Monitoring
+
+The `monitor-dir.sh` script provides real-time monitoring of directories for newly moved folders.  
+When a directory is moved into the monitored path, it automatically runs `file-clean-rust` to clean it up.
+
+### Features
+
+- **Cross-platform support**: Works on Linux (using `inotifywait`) and macOS (using `fswatch`)
+- **Smart waiting mechanism**: Waits for directory to stabilize before processing to ensure all files are moved
+- **Safe path handling**: Correctly handles filenames with spaces and special characters
+- **Timeout protection**: Maximum wait time to prevent infinite waiting
+
+### Prerequisites
+
+**Linux/Unix systems:**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install inotify-tools
+
+# RHEL/CentOS/Fedora
+sudo yum install inotify-tools
+# or
+sudo dnf install inotify-tools
+```
+
+**macOS:**
+
+```bash
+brew install fswatch
+```
+
+### Script Usage
+
+```bash
+# Monitor a single directory
+./monitor-dir.sh /data/Downloads/TV/
+
+# Monitor multiple directories
+./monitor-dir.sh /data/Downloads/TV/ /data/Downloads/Movies/
+```
+
+### Script Configuration
+
+The script uses the following default settings:
+
+- **Maximum wait time**: 60 seconds
+- **Stability check time**: 3 seconds (waits for 3 seconds of no file activity)
+
+You can modify these values in the `wait_for_directory_stable()` function:
+
+```bash
+local max_wait=60     # Maximum wait time (seconds)
+local stable_time=3   # Stability time (seconds)
+```
+
+### How it works
+
+1. Monitors specified directories for `moved_to` events
+2. When a directory is moved in, starts monitoring that directory for file changes
+3. Waits until no file activity is detected for the stability period
+4. Runs `file-clean-rust --prune` on the stabilized directory
+5. Continues monitoring for new directory movements
+
+### Example Output
+
+```text
+使用文件监控工具: fswatch
+检测到目录移动事件: /data/Downloads/TV/MyShow.S01.2025/Episode.01.1080p.WEB-DL
+事件类型: MOVED_TO,ISDIR
+等待目录稳定: /data/Downloads/TV/MyShow.S01.2025/Episode.01.1080p.WEB-DL
+检测到文件变化，继续等待...
+检测到文件变化，继续等待...
+目录已稳定 3 秒，开始处理
+开始处理目录: /data/Downloads/TV/MyShow.S01.2025/Episode.01.1080p.WEB-DL
+正在扫描文件...
+[... file-clean-rust output ...]
+```
+
+## File Cleanup Configuration
 
 The default configuration file `.cleanup-patterns.yml` is searched for starting from the specified target path,  
 moving upwards step by step until the root directory is reached.  
@@ -60,9 +141,9 @@ remove_hash:
   # To improve efficiency, this method first matches the file names # 为了提升效率，此方法先匹配文件名，
   # and then calculates the hash values.                            # 再计算哈希值。
   # Only if both match will the file be deleted.                    # 二者都匹配才会删除。
-  # The file name rules are the same as the `remove` rules          # 文件名规则同 `remove` 规则， 
+  # The file name rules are the same as the `remove` rules          # 文件名规则同 `remove` 规则，
   # and support wildcards and regular expressions.                  # 支持通配符和正则表达式。
-  # Note: It is not recommended to use wildcards like *.jpg,        # 注：不建议使用 *.jpg 这样的通配符， 
+  # Note: It is not recommended to use wildcards like *.jpg,        # 注：不建议使用 *.jpg 这样的通配符，
   # as this may result in too many files needing hash calculation.  #    可能导致需要计算 hash 的文件过多。
   "filename_or_wildcard":
     - md5hash1
@@ -79,5 +160,6 @@ cleanup: |-
 ```
 
 ## Related projects
+
 - [aria2](https://github.com/aria2/aria2)
 - [aria2rpc-oversee](https://github.com/kenchou/aria2rpc-oversee)
