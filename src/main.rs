@@ -201,9 +201,7 @@ fn main() -> std::io::Result<()> {
             // 目录子项映射
             let mut dir_children: HashMap<&PathBuf, Vec<&PathBuf>> = HashMap::new();
 
-            let dirs: Vec<&PathBuf> = all_paths.iter()
-                .filter(|p| p.is_dir())
-                .collect();
+            let dirs: Vec<&PathBuf> = all_paths.iter().filter(|p| p.is_dir()).collect();
 
             // 初始化目录映射
             for &dir in &dirs {
@@ -229,8 +227,9 @@ fn main() -> std::io::Result<()> {
                 empty_dirs.clear();
 
                 for &dir in dirs.iter() {
-                    if !to_delete.contains(&dir) &&
-                        dir_children.get(dir).map_or(true, |c| c.is_empty()) {
+                    if !to_delete.contains(&dir)
+                        && dir_children.get(dir).map_or(true, |c| c.is_empty())
+                    {
                         empty_dirs.push(dir);
                     }
                 }
@@ -259,56 +258,206 @@ fn main() -> std::io::Result<()> {
 
         // 第二阶段：更新 file_info
         for dir in dirs_to_mark_delete {
-            file_info.insert(
-                dir,
-                ("<EMPTY_DIR>".to_string(), data::Operation::Delete),
-            );
+            file_info.insert(dir, ("<EMPTY_DIR>".to_string(), data::Operation::Delete));
         }
     }
 
     // 完成进度条
     process_bar.finish_with_message("文件处理完成");
 
+    // 首先，直接复制所有操作到 effective_operations，不做修改
+    let mut effective_operations: HashMap<PathBuf, (String, data::Operation)> = file_info.clone();
+
+    // 构建删除路径集合，用于快速查找
+    let delete_paths: HashSet<PathBuf> = effective_operations
+        .iter()
+        .filter(|(_, (_, op))| *op == data::Operation::Delete)
+        .map(|(path, _)| path.clone())
+        .collect();
+
+    if app_options.is_debug_mode() {
+        println!("删除路径集合: {:?}", delete_paths);
+    }
+
+    // 检查每个路径，如果其父目录被删除，则标记为间接删除
+    let paths_to_update: Vec<(PathBuf, String)> = effective_operations
+        .iter()
+        .filter(|(_, (_, op))| *op != data::Operation::Delete) // 不是直接删除的项目
+        .filter_map(|(path, (pattern, _op))| {
+            // 检查是否有任何父目录被删除
+            let mut current_path = path.clone();
+            while let Some(parent) = current_path.parent() {
+                let parent_pathbuf = parent.to_path_buf();
+                if app_options.is_debug_mode() {
+                    println!(
+                        "检查路径 {:?} 的父目录 {:?} 是否在删除列表中",
+                        path, parent_pathbuf
+                    );
+                }
+                if delete_paths.contains(&parent_pathbuf) {
+                    if app_options.verbose >= 2 {
+                        println!(
+                            "找到父目录被删除: {:?} 的父目录 {:?} 被删除",
+                            path, parent_pathbuf
+                        );
+                    }
+                    return Some((path.clone(), format!("父目录被删除: {}", pattern)));
+                }
+                current_path = parent_pathbuf;
+            }
+            None
+        })
+        .collect();
+
+    // 更新受父目录删除影响的项目
+    for (path, new_pattern) in paths_to_update {
+        if app_options.is_debug_mode() {
+            println!("更新路径: {:?} -> {}", path, new_pattern);
+        }
+        effective_operations.insert(path, (new_pattern, data::Operation::Delete));
+    }
+
     // 执行删除操作
     if app_options.enable_deletion {
-        file_info
-            .iter()
-            .filter(|(_, (_, op))| *op == data::Operation::Delete)
-            .for_each(|(file_path, (pattern, _))| {
-                // 删除操作代码...
-                if app_options.verbose > 0 {
-                    println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
-                } else {
-                    println!("{} {:#?}", "[-]".red(), file_path);
-                }
+        // 收集所有删除操作，区分直接删除和因父目录删除而受影响的项目
+        let mut direct_deletes = Vec::new();
+        let mut indirect_deletes = Vec::new();
 
-                if app_options.prune {
-                    match util::remove_path(file_path.clone()) {
-                        Ok(_) => (),
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                        Err(e) => {
-                            eprintln!("{} 删除文件失败 {:?}: {}", "[错误]".red(), file_path, e)
-                        }
+        for (file_path, (pattern, op)) in effective_operations.iter() {
+            if *op == data::Operation::Delete {
+                if pattern.starts_with("父目录被删除:") {
+                    indirect_deletes.push((file_path, pattern));
+                } else {
+                    direct_deletes.push((file_path, pattern));
+                }
+            }
+        }
+
+        // 执行直接删除操作
+        for (file_path, pattern) in direct_deletes {
+            if app_options.verbose > 0 {
+                println!("{} {:#?} <== {}", "[-]".red(), file_path, pattern);
+            } else {
+                println!("{} {:#?}", "[-]".red(), file_path);
+            }
+
+            if app_options.prune {
+                match util::remove_path(file_path.clone()) {
+                    Ok(_) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(e) => {
+                        eprintln!("{} 删除文件失败 {:?}: {}", "[错误]".red(), file_path, e)
                     }
                 }
-            });
+            }
+        }
+
+        // 显示受父目录删除影响的项目（但不执行删除，因为已经被父目录删除了）
+        if !indirect_deletes.is_empty() && app_options.verbose > 0 {
+            println!("{} 以下文件已随父目录删除:", "[信息]".blue());
+            for (file_path, pattern) in indirect_deletes {
+                let original_pattern = pattern.strip_prefix("父目录被删除: ").unwrap_or(pattern);
+                println!(
+                    "  {} {:#?} <== {}",
+                    "[↳]".dimmed(),
+                    file_path,
+                    original_pattern
+                );
+            }
+        }
     }
 
     // 执行重命名操作
     if app_options.enable_renaming {
-        let rename_operations: Vec<(PathBuf, String)> = file_info
+        let mut rename_operations: Vec<(PathBuf, String)> = effective_operations
             .iter()
             .filter(|(_, (_, op))| *op == data::Operation::Rename)
-            .map(|(path, (pattern, _))| (path.clone(), pattern.clone()))
+            .filter(|(_path, (pattern, _))| {
+                // 过滤掉被标记为"父目录被删除"的项目
+                !pattern.starts_with("父目录被删除:")
+            })
+            .map(|(original_path, (new_file_name, _))| {
+                (original_path.clone(), new_file_name.clone())
+            })
             .collect();
 
-        for (file_path, new_file_name) in rename_operations {
-            println!("{} {:#?} ==> {}", "[*]".yellow(), file_path, new_file_name);
-            let mut new_filepath = file_path.clone();
-            new_filepath.set_file_name(&new_file_name);
+        // 按深度排序：深度大的（子项）先处理，深度小的（父项）后处理
+        rename_operations.sort_by(|a, b| {
+            let depth_a = a.0.components().count();
+            let depth_b = b.0.components().count();
+            depth_b.cmp(&depth_a) // 从深到浅排序
+        });
+
+        'outer: for (original_path, new_file_name) in rename_operations {
+            println!(
+                "{} {:#?} ==> {}",
+                "[*]".yellow(),
+                original_path,
+                new_file_name
+            );
+
+            let mut final_filepath = original_path.clone();
+            final_filepath.set_file_name(&new_file_name);
+
+            // 处理重命名冲突：如果目标路径已存在，添加后缀 (1), (2), ...
+            if final_filepath.exists() {
+                let parent = original_path.parent().unwrap();
+                let original_name = &new_file_name;
+
+                // 分离文件名和扩展名
+                let (name_without_ext, extension) = if let Some(dot_pos) = original_name.rfind('.')
+                {
+                    let name_part = &original_name[..dot_pos];
+                    let ext_part = &original_name[dot_pos..];
+                    (name_part, ext_part)
+                } else {
+                    (original_name.as_str(), "")
+                };
+
+                let mut counter = 1;
+                loop {
+                    let new_name = format!("{}({}){}", name_without_ext, counter, extension);
+                    let test_path = parent.join(&new_name);
+
+                    if !test_path.exists() {
+                        println!("  {} 目标已存在，使用新名称: {}", "[提示]".blue(), new_name);
+                        final_filepath = test_path;
+                        break;
+                    }
+
+                    counter += 1;
+                    if counter > 999 {
+                        eprintln!(
+                            "{} 无法找到可用的重命名目标（尝试了999个后缀）: {:?}",
+                            "[错误]".red(),
+                            original_path
+                        );
+                        continue 'outer;
+                    }
+                }
+            }
+
             if app_options.prune {
-                println!("--> {}", new_filepath.display().to_string().cyan());
-                rename(file_path, new_filepath)?;
+                println!("--> {}", final_filepath.display().to_string().cyan());
+                match rename(&original_path, &final_filepath) {
+                    Ok(_) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        eprintln!(
+                            "{} 源文件不存在，可能已被父目录操作影响: {:?}",
+                            "[警告]".yellow(),
+                            original_path
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "{} 重命名文件失败 {:?} -> {:?}: {}",
+                            "[错误]".red(),
+                            original_path,
+                            final_filepath,
+                            e
+                        );
+                    }
+                }
             }
         }
     }
