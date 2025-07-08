@@ -97,16 +97,20 @@ echo "使用文件监控工具: $watcher"
 
 if [ "$watcher" = "inotifywait" ]; then
     # Linux/Unix 系统使用 inotifywait
-    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to "$@" | while IFS= read -r line; do
+    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to,create "$@" | while IFS= read -r line; do
         echo "原始事件: $line"
-        # 检查是否包含 ISDIR
-        if [[ "$line" == *"ISDIR"* ]]; then
+        
+        # 检查是否是目录事件（创建或移动）
+        if [[ "$line" == *"CREATE,ISDIR"* ]] || [[ "$line" == *"MOVED_TO,ISDIR"* ]]; then
             # 使用更安全的方式解析路径和事件
-            # 找到最后一个空格的位置，分离路径和事件
             event_part="${line##* }"
             path_part="${line% *}"
             
-            echo "检测到目录移动事件: $path_part"
+            if [[ "$line" == *"CREATE,ISDIR"* ]]; then
+                echo "检测到目录创建事件: $path_part"
+            else
+                echo "检测到目录移动事件: $path_part"
+            fi
             echo "事件类型: $event_part"
 
             # 等待目录稳定后再处理
@@ -122,19 +126,16 @@ elif [ "$watcher" = "fswatch" ]; then
     fswatch -r "$@" | while IFS= read -r changed_path; do
         echo "检测到变化: $changed_path"
 
-        # 检查是否是新创建的目录
+        # 检查是否是目录
         if [ -d "$changed_path" ]; then
-            # 检查目录是否是新移动过来的（简单的启发式检查）
-            if [ -n "$(find "$changed_path" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-                echo "检测到新目录: $changed_path"
+            echo "检测到目录事件: $changed_path"
 
-                # 等待目录稳定后再处理
-                wait_for_directory_stable "$changed_path"
+            # 等待目录稳定后再处理
+            wait_for_directory_stable "$changed_path"
 
-                # 处理目录
-                echo "开始处理目录: $changed_path"
-                "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
-            fi
+            # 处理目录
+            echo "开始处理目录: $changed_path"
+            "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
         fi
     done
 fi
