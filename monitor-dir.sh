@@ -97,7 +97,8 @@ echo "使用文件监控工具: $watcher"
 
 if [ "$watcher" = "inotifywait" ]; then
     # Linux/Unix 系统使用 inotifywait
-    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to,create "$@" | while IFS= read -r line; do
+    # 监控原始触发事件，不监控 create 防止手动 mkdir 目录被删除
+    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to "$@" | while IFS= read -r line; do
         echo "原始事件: $line"
         
         # 检查是否是目录事件（创建或移动）
