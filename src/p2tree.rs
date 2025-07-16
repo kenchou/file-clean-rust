@@ -92,6 +92,10 @@ pub fn path_list_to_tree(
                 let node_data = _node.data();
                 *node_data = format!("{} {} => {}", node_data, SYMBOL_RENAME.yellow(), _pattern);
             }
+            Operation::MoveToParent => {
+                let node_data = _node.data();
+                *node_data = format!("{} {} ↗ 移动内容到父目录", node_data, SYMBOL_RENAME.green());
+            }
             _ => {}
         }
     }
