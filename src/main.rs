@@ -128,6 +128,22 @@ fn main() -> std::io::Result<()> {
             if options_ref.enable_renaming {
                 let new_filename = matcher_ref.clean_filename(filename);
                 if new_filename != filename {
+                    // 检查是否是目录且清理结果为空（只保留路径部分，文件名为空）
+                    if filepath.is_dir() {
+                        let cleaned_name = PathBuf::from(&new_filename)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+
+                        if cleaned_name.is_empty() {
+                            // 目录名被完全清理，需要移动内容到父目录
+                            return Some((
+                                filepath.to_path_buf(),
+                                ("".to_string(), data::Operation::MoveToParent),
+                            ));
+                        }
+                    }
+
                     return Some((
                         filepath.to_path_buf(),
                         (new_filename, data::Operation::Rename),
@@ -363,6 +379,122 @@ fn main() -> std::io::Result<()> {
                     file_path,
                     original_pattern
                 );
+            }
+        }
+    }
+
+    // 首先处理移动到父目录的操作
+    if app_options.enable_renaming {
+        let move_to_parent_operations: Vec<PathBuf> = effective_operations
+            .iter()
+            .filter(|(_, (_, op))| *op == data::Operation::MoveToParent)
+            .filter(|(_path, (pattern, _))| {
+                // 过滤掉被标记为"父目录被删除"的项目
+                !pattern.starts_with("父目录被删除:")
+            })
+            .map(|(original_path, _)| original_path.clone())
+            .collect();
+
+        for dir_path in move_to_parent_operations {
+            println!("{} {:#?} ==> 移动内容到父目录", "[*]".yellow(), dir_path);
+
+            if let Some(parent_dir) = dir_path.parent() {
+                if app_options.prune {
+                    // 移动目录中的所有内容到父目录
+                    if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                        for entry in entries {
+                            if let Ok(entry) = entry {
+                                let source_path = entry.path();
+                                let filename = entry.file_name();
+                                let mut target_path = parent_dir.join(&filename);
+
+                                // 处理命名冲突
+                                if target_path.exists() {
+                                    let original_name = filename.to_string_lossy();
+                                    let (name_without_ext, extension) =
+                                        if let Some(dot_pos) = original_name.rfind('.') {
+                                            let name_part = &original_name[..dot_pos];
+                                            let ext_part = &original_name[dot_pos..];
+                                            (name_part, ext_part)
+                                        } else {
+                                            (original_name.as_ref(), "")
+                                        };
+
+                                    let mut counter = 1;
+                                    loop {
+                                        let new_name = format!(
+                                            "{}({}){}",
+                                            name_without_ext, counter, extension
+                                        );
+                                        target_path = parent_dir.join(&new_name);
+
+                                        if !target_path.exists() {
+                                            println!(
+                                                "  {} 目标已存在，使用新名称: {}",
+                                                "[提示]".blue(),
+                                                new_name
+                                            );
+                                            break;
+                                        }
+
+                                        counter += 1;
+                                        if counter > 999 {
+                                            eprintln!(
+                                                "{} 无法找到可用的移动目标（尝试了999个后缀）: {:?}",
+                                                "[错误]".red(),
+                                                source_path
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                println!(
+                                    "  --> 移动 {} 到 {}",
+                                    source_path.display().to_string().cyan(),
+                                    target_path.display().to_string().cyan()
+                                );
+                                match std::fs::rename(&source_path, &target_path) {
+                                    Ok(_) => (),
+                                    Err(e) => {
+                                        eprintln!(
+                                            "{} 移动文件失败 {:?} -> {:?}: {}",
+                                            "[错误]".red(),
+                                            source_path,
+                                            target_path,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        // 移动完成后删除空目录
+                        match std::fs::remove_dir(&dir_path) {
+                            Ok(_) => println!(
+                                "  --> 删除空目录 {}",
+                                dir_path.display().to_string().cyan()
+                            ),
+                            Err(e) => {
+                                eprintln!(
+                                    "{} 删除空目录失败 {:?}: {}",
+                                    "[错误]".red(),
+                                    dir_path,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        eprintln!("{} 无法读取目录内容: {:?}", "[错误]".red(), dir_path);
+                    }
+                } else {
+                    println!(
+                        "  --> 预览：将移动目录内容到 {}",
+                        parent_dir.display().to_string().cyan()
+                    );
+                }
+            } else {
+                eprintln!("{} 无法获取父目录: {:?}", "[错误]".red(), dir_path);
             }
         }
     }

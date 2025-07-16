@@ -5,6 +5,7 @@ pub enum Operation {
     None,
     Delete,
     Rename,
+    MoveToParent, // 当目录名被完全清理时，将内容移动到父目录
 }
 
 #[derive(Debug)]
