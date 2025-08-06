@@ -6,7 +6,7 @@ fi
 
 BIN_PATH=$(dirname $0)
 
-# 检测操作系统并设置相应的文件监控工具
+# Detect OS and set appropriate file monitoring tool
 detect_file_watcher() {
     if command -v inotifywait >/dev/null 2>&1; then
         echo "inotifywait"
@@ -17,74 +17,74 @@ detect_file_watcher() {
     fi
 }
 
-# 等待目录稳定的函数
+# Function to wait for directory to become stable
 wait_for_directory_stable() {
     local target_dir="$1"
-    local is_new_create="$2"  # 新建目录标志，true/false
-    local max_wait=60  # 最大等待时间（秒）
-    local stable_time=3  # 稳定时间（秒）
+    local is_new_create="$2"  # Flag for newly created directory, true/false
+    local max_wait=60  # Maximum wait time (seconds)
+    local stable_time=3  # Stable time (seconds)
     local last_change=0
     local start_time=$(date +%s)
 
-    echo "等待目录稳定: $target_dir"
+    echo "Waiting for directory to stabilize: $target_dir"
 
     local watcher=$(detect_file_watcher)
 
     if [ "$watcher" = "error" ]; then
-        echo "警告: 未找到文件监控工具，使用固定延迟"
+        echo "Warning: No file monitoring tool found, using fixed delay"
         sleep 5
         return
     fi
 
-    # 使用相应的工具监控目录变化
+    # Monitor directory changes using appropriate tool
     while true; do
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
 
-        # 如果超过最大等待时间，直接返回
+        # If maximum wait time exceeded, proceed anyway
         if [ $elapsed -gt $max_wait ]; then
-            echo "等待超时，继续处理目录"
+            echo "Wait timeout, proceeding with directory processing"
             break
         fi
 
         local has_change=false
 
         if [ "$watcher" = "inotifywait" ]; then
-            # Linux/Unix 系统使用 inotifywait
+            # Linux/Unix systems use inotifywait
             if timeout $stable_time inotifywait -qq -r -e create,moved_to,modify "$target_dir" 2>/dev/null; then
                 has_change=true
             fi
         elif [ "$watcher" = "fswatch" ]; then
-            # macOS 系统使用 fswatch
+            # macOS systems use fswatch
             if timeout $stable_time fswatch -1 -r "$target_dir" >/dev/null 2>&1; then
                 has_change=true
             fi
         fi
 
         if [ "$has_change" = true ]; then
-            # 有新的文件活动，重置计时器
+            # New file activity detected, reset timer
             last_change=$(date +%s)
-            echo "检测到文件变化，继续等待..."
+            echo "File changes detected, continuing to wait..."
         else
-            # 超时了，说明在 stable_time 秒内没有文件变化
+            # Timeout occurred, no file changes in stable_time seconds
             if [ $last_change -gt 0 ]; then
                 stable_duration=$((current_time - last_change))
                 if [ $stable_duration -ge $stable_time ]; then
-                    # 仅新建目录且为空时跳过清理
+                    # Skip cleanup only for newly created empty directories
                     if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
-                        echo "新建且稳定的空目录，无需清理。"
+                        echo "Newly created and stable empty directory, no cleanup needed."
                         return
                     fi
-                    echo "目录已稳定 ${stable_time} 秒，开始处理"
+                    echo "Directory stable for ${stable_time} seconds, starting processing"
                     break
                 fi
             else
-                # 首次检查就没有变化，说明目录已经稳定
+                # No changes detected on first check, directory already stable
                 if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
-                    echo "新建且稳定的空目录，无需清理。"
+                    echo "Newly created and stable empty directory, no cleanup needed."
                     return
                 fi
-                echo "目录已稳定，开始处理"
+                echo "Directory is stable, starting processing"
                 break
             fi
         fi
@@ -93,57 +93,57 @@ wait_for_directory_stable() {
     done
 }
 
-# 检测并启动相应的文件监控
+# Detect and start appropriate file monitoring
 watcher=$(detect_file_watcher)
 
 if [ "$watcher" = "error" ]; then
-    echo "错误: 需要安装 inotifywait (Linux) 或 fswatch (macOS)"
-    echo "macOS 安装命令: brew install fswatch"
-    echo "Linux 安装命令: apt-get install inotify-tools (Ubuntu/Debian) 或 yum install inotify-tools (RHEL/CentOS)"
+    echo "Error: Need to install inotifywait (Linux) or fswatch (macOS)"
+    echo "macOS install command: brew install fswatch"
+    echo "Linux install command: apt-get install inotify-tools (Ubuntu/Debian) or yum install inotify-tools (RHEL/CentOS)"
     exit 1
 fi
 
-echo "使用文件监控工具: $watcher"
+echo "Using file monitoring tool: $watcher"
 
 if [ "$watcher" = "inotifywait" ]; then
-    # Linux/Unix 系统使用 inotifywait
-    # 监控原始触发事件，不监控 create 防止手动 mkdir 目录被删除
+    # Linux/Unix systems use inotifywait
+    # Monitor original trigger events, don't monitor create to prevent manually mkdir directories from being deleted
     inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e create,moved_to,modify "$@" | while IFS= read -r line; do
-        echo "原始事件: $line"
-        # 检查是否是目录事件（创建或移动）
+        echo "Raw event: $line"
+        # Check if it's a directory event (create or move)
         if [[ "$line" == *"CREATE,ISDIR"* ]] || [[ "$line" == *"MOVED_TO,ISDIR"* ]]; then
             event_part="${line##* }"
             path_part="${line% *}"
             if [[ "$line" == *"CREATE,ISDIR"* ]]; then
-                echo "检测到目录创建事件: $path_part"
-                echo "事件类型: $event_part"
-                # 新建目录，传递 true
+                echo "Directory creation event detected: $path_part"
+                echo "Event type: $event_part"
+                # Newly created directory, pass true
                 wait_for_directory_stable "$path_part" true
             else
-                echo "检测到目录移动事件: $path_part"
-                echo "事件类型: $event_part"
-                # 移动/改名目录，传递 false
+                echo "Directory move event detected: $path_part"
+                echo "Event type: $event_part"
+                # Moved/renamed directory, pass false
                 wait_for_directory_stable "$path_part" false
             fi
-            # 处理目录
-            echo "开始处理目录: $path_part"
+            # Process directory
+            echo "Starting directory processing: $path_part"
             "${BIN_PATH}/file-clean-rust" --prune "$path_part"
         fi
     done
 elif [ "$watcher" = "fswatch" ]; then
-    # macOS 系统使用 fswatch
+    # macOS systems use fswatch
     fswatch -r "$@" | while IFS= read -r changed_path; do
-        echo "检测到变化: $changed_path"
+        echo "Change detected: $changed_path"
 
-        # 检查是否是目录
+        # Check if it's a directory
         if [ -d "$changed_path" ]; then
-            echo "检测到目录事件: $changed_path"
+            echo "Directory event detected: $changed_path"
 
-            # 等待目录稳定后再处理
-            wait_for_directory_stable "$changed_path"
+            # Wait for directory to stabilize before processing
+            wait_for_directory_stable "$changed_path" false
 
-            # 处理目录
-            echo "开始处理目录: $changed_path"
+            # Process directory
+            echo "Starting directory processing: $changed_path"
             "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
         fi
     done
