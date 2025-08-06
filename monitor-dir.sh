@@ -33,7 +33,12 @@ wait_for_directory_stable() {
     if [ "$watcher" = "error" ]; then
         echo "Warning: No file monitoring tool found, using fixed delay"
         sleep 5
-        return
+        # Check for newly created empty directory before proceeding
+        if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
+            echo "Newly created and stable empty directory, no cleanup needed."
+            return 1  # Return non-zero to indicate no processing needed
+        fi
+        return 0
     fi
 
     # Monitor directory changes using appropriate tool
@@ -73,7 +78,7 @@ wait_for_directory_stable() {
                     # Skip cleanup only for newly created empty directories
                     if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
                         echo "Newly created and stable empty directory, no cleanup needed."
-                        return
+                        return 1  # Return non-zero to indicate no processing needed
                     fi
                     echo "Directory stable for ${stable_time} seconds, starting processing"
                     break
@@ -82,7 +87,7 @@ wait_for_directory_stable() {
                 # No changes detected on first check, directory already stable
                 if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
                     echo "Newly created and stable empty directory, no cleanup needed."
-                    return
+                    return 1  # Return non-zero to indicate no processing needed
                 fi
                 echo "Directory is stable, starting processing"
                 break
@@ -91,6 +96,8 @@ wait_for_directory_stable() {
 
         sleep 0.5
     done
+
+    return 0  # Return zero to indicate processing should continue
 }
 
 # Detect and start appropriate file monitoring
@@ -118,16 +125,21 @@ if [ "$watcher" = "inotifywait" ]; then
                 echo "Directory creation event detected: $path_part"
                 echo "Event type: $event_part"
                 # Newly created directory, pass true
-                wait_for_directory_stable "$path_part" true
+                if wait_for_directory_stable "$path_part" true; then
+                    # Process directory only if function returns 0 (should process)
+                    echo "Starting directory processing: $path_part"
+                    "${BIN_PATH}/file-clean-rust" --prune "$path_part"
+                fi
             else
                 echo "Directory move event detected: $path_part"
                 echo "Event type: $event_part"
                 # Moved/renamed directory, pass false
-                wait_for_directory_stable "$path_part" false
+                if wait_for_directory_stable "$path_part" false; then
+                    # Process directory only if function returns 0 (should process)
+                    echo "Starting directory processing: $path_part"
+                    "${BIN_PATH}/file-clean-rust" --prune "$path_part"
+                fi
             fi
-            # Process directory
-            echo "Starting directory processing: $path_part"
-            "${BIN_PATH}/file-clean-rust" --prune "$path_part"
         fi
     done
 elif [ "$watcher" = "fswatch" ]; then
@@ -140,11 +152,11 @@ elif [ "$watcher" = "fswatch" ]; then
             echo "Directory event detected: $changed_path"
 
             # Wait for directory to stabilize before processing
-            wait_for_directory_stable "$changed_path" false
-
-            # Process directory
-            echo "Starting directory processing: $changed_path"
-            "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
+            if wait_for_directory_stable "$changed_path" false; then
+                # Process directory only if function returns 0 (should process)
+                echo "Starting directory processing: $changed_path"
+                "${BIN_PATH}/file-clean-rust" --prune "$changed_path"
+            fi
         fi
     done
 fi
