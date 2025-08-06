@@ -20,6 +20,7 @@ detect_file_watcher() {
 # 等待目录稳定的函数
 wait_for_directory_stable() {
     local target_dir="$1"
+    local is_new_create="$2"  # 新建目录标志，true/false
     local max_wait=60  # 最大等待时间（秒）
     local stable_time=3  # 稳定时间（秒）
     local last_change=0
@@ -69,11 +70,20 @@ wait_for_directory_stable() {
             if [ $last_change -gt 0 ]; then
                 stable_duration=$((current_time - last_change))
                 if [ $stable_duration -ge $stable_time ]; then
+                    # 仅新建目录且为空时跳过清理
+                    if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
+                        echo "新建且稳定的空目录，无需清理。"
+                        return
+                    fi
                     echo "目录已稳定 ${stable_time} 秒，开始处理"
                     break
                 fi
             else
                 # 首次检查就没有变化，说明目录已经稳定
+                if [ "$is_new_create" = true ] && [ -z "$(ls -A "$target_dir")" ]; then
+                    echo "新建且稳定的空目录，无需清理。"
+                    return
+                fi
                 echo "目录已稳定，开始处理"
                 break
             fi
@@ -98,25 +108,23 @@ echo "使用文件监控工具: $watcher"
 if [ "$watcher" = "inotifywait" ]; then
     # Linux/Unix 系统使用 inotifywait
     # 监控原始触发事件，不监控 create 防止手动 mkdir 目录被删除
-    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e moved_to "$@" | while IFS= read -r line; do
+    inotifywait --exclude '(.tmp)' -r -m --format '%w%f %e' -e create,moved_to,modify "$@" | while IFS= read -r line; do
         echo "原始事件: $line"
-        
         # 检查是否是目录事件（创建或移动）
         if [[ "$line" == *"CREATE,ISDIR"* ]] || [[ "$line" == *"MOVED_TO,ISDIR"* ]]; then
-            # 使用更安全的方式解析路径和事件
             event_part="${line##* }"
             path_part="${line% *}"
-            
             if [[ "$line" == *"CREATE,ISDIR"* ]]; then
                 echo "检测到目录创建事件: $path_part"
+                echo "事件类型: $event_part"
+                # 新建目录，传递 true
+                wait_for_directory_stable "$path_part" true
             else
                 echo "检测到目录移动事件: $path_part"
+                echo "事件类型: $event_part"
+                # 移动/改名目录，传递 false
+                wait_for_directory_stable "$path_part" false
             fi
-            echo "事件类型: $event_part"
-
-            # 等待目录稳定后再处理
-            wait_for_directory_stable "$path_part"
-
             # 处理目录
             echo "开始处理目录: $path_part"
             "${BIN_PATH}/file-clean-rust" --prune "$path_part"
