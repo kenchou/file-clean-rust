@@ -151,8 +151,8 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            // 检查是否为空目录
-            if options_ref.enable_prune_empty_dir && filepath.is_dir() {
+            // 检查是否为空目录（但排除符号链接目录）
+            if options_ref.enable_prune_empty_dir && filepath.is_dir() && !filepath.is_symlink() {
                 if filepath
                     .read_dir()
                     .map(|mut d| d.next().is_none())
@@ -217,7 +217,7 @@ fn main() -> std::io::Result<()> {
             // 目录子项映射
             let mut dir_children: HashMap<&PathBuf, Vec<&PathBuf>> = HashMap::new();
 
-            let dirs: Vec<&PathBuf> = all_paths.iter().filter(|p| p.is_dir()).collect();
+            let dirs: Vec<&PathBuf> = all_paths.iter().filter(|p| p.is_dir() && !p.is_symlink()).collect();
 
             // 初始化目录映射
             for &dir in &dirs {
